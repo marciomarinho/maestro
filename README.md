@@ -2,10 +2,16 @@
 
 **Maestro accepts payments from many merchants and routes each transaction to the best of several acquiring banks — automatically shifting traffic away from a degrading acquirer so merchants' authorization success rates stay flat — while a double-entry ledger and daily reconciliation guarantee every cent is accounted for.**
 
-> **Status: Phase 0 — design complete, implementation begins in Phase 1.**
-> Every document in [`docs/`](docs/) is written. No code exists yet, by design: the architecture, the domain model, the API surface, the authorization model and thirteen decision records were settled first. See the [roadmap](docs/ROADMAP.md).
+> **Status: Phase 1 complete — a payment goes end to end.** Create it, confirm it, watch
+> it reach `AUTHORIZED` through the outbox, Kafka, the router and a simulated acquiring
+> bank. Retry the same request and it is still charged exactly once.
+> The design was settled first: see the [roadmap](docs/ROADMAP.md) and the
+> [fourteen decision records](docs/adr/README.md).
 
-Everything runs on a laptop. `docker compose up` brings up the whole platform — services, Kafka, Postgres, observability, the merchant portal, and a fleet of simulated acquiring banks you can break on purpose.
+Everything runs on a laptop — about 1.6 GB across five containers today. `docker compose up`
+brings up the whole platform: services, Kafka, PostgreSQL, and simulated acquiring banks
+you can break on purpose. The observability stack and the merchant portal join it in
+later phases, behind their own profiles.
 
 ---
 
@@ -75,14 +81,14 @@ Four JVM services and a web portal, each with one job. Full detail — component
 | **Security** | Four-role RBAC on permissions (not roles), per-merchant scoping with Postgres row-level security as defence in depth, `404`-not-`403` to avoid leaking existence, card data never entering the system |
 | **Operations** | End-to-end tracing of a single payment, dashboards as code, chaos experiments, runbooks written before they are needed |
 | **Full-stack range** | A polished merchant portal with a live payment feed and RBAC-gated money actions |
-| **Engineering judgement** | Thirteen decision records that say what was rejected and why, and a written backlog of everything deliberately not built |
+| **Engineering judgement** | Fourteen decision records that say what was rejected and why, and a written backlog of everything deliberately not built |
 
 ---
 
 ## Roadmap
 
-- [x] **Phase 0** — Design foundation: architecture, domain, API, authorization model, 13 ADRs
-- [ ] **Phase 1** — Walking skeleton: create → confirm → authorize end-to-end, running locally
+- [x] **Phase 0** — Design foundation: architecture, domain, API, authorization model, 14 ADRs
+- [x] **Phase 1** — Walking skeleton: create → confirm → authorize end-to-end, running locally
 - [ ] **Phase 2** — The books: double-entry ledger, holds, capture/void/refund, race tests
 - [ ] **Phase 3** — The flagship: adaptive routing, failover, circuit breakers, the brownout demo
 - [ ] **Phase 4** — The evidence: tracing, dashboards, load reports, chaos experiments
@@ -92,6 +98,23 @@ Four JVM services and a web portal, each with one job. Full detail — component
 - [ ] **Phase 8** — *(optional)* Ephemeral AWS deployment via Terraform
 
 Each phase leaves the repository in a finished, demoable state. Details and definitions of done: [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+### What works today
+
+A payment is created and confirmed in a single database transaction that also claims the
+idempotency key and appends the authorization command to the outbox — three writes, one
+commit, so no crash can leave them disagreeing. A relay publishes the command to Kafka,
+claiming rows with a per-aggregate advisory lock so concurrent instances cannot reorder
+one payment's events. The router claims a numbered attempt, calls the acquirer with an
+idempotency key derived from it, and publishes the outcome through its own outbox. The
+API applies that outcome with a guarded conditional update, which is what makes a
+redelivered event a no-op instead of a second charge.
+
+Tests that hold those claims up: five ArchUnit rules (the domain library stays
+framework-free, no floating-point money, no cross-service dependencies) and seven
+integration tests against real PostgreSQL and Kafka — including twelve concurrent
+identical requests producing exactly one payment, and another merchant's payment
+returning `404` rather than `403`.
 
 ---
 
@@ -105,7 +128,7 @@ Each phase leaves the repository in a finished, demoable state. Details and defi
 | [Domain model](docs/domain.md) | Payments vocabulary, entities, money-handling rules, invariants |
 | [API design](docs/architecture/api-design.md) | REST surface, idempotency, errors, pagination, webhooks |
 | [Authorization model](docs/security/authz-model.md) | Roles, permissions, tenant isolation, PCI scope boundary |
-| [Decision records](docs/adr/README.md) | Thirteen ADRs — the trade-offs, including the rejected options |
+| [Decision records](docs/adr/README.md) | Fourteen ADRs — the trade-offs, including the rejected options |
 | [Operations](docs/operations/README.md) | Runbooks and the incident-response posture |
 | [Backlog](docs/backlog.md) | Consciously deferred work, with the reasoning |
 
@@ -113,12 +136,41 @@ Each phase leaves the repository in a finished, demoable state. Details and defi
 
 ## Quickstart
 
-*Available from Phase 1.* The intent, kept honest by a CI job that executes it:
+Requires Docker and `jq`. Nothing else — no JDK, no account, no credentials. A scheduled
+CI job runs exactly these commands, so they cannot silently stop working.
 
 ```bash
 git clone <this repo> && cd maestro
-docker compose -f deploy/compose/docker-compose.yml up -d
+docker compose -f deploy/compose/docker-compose.yml up -d --wait
 ./scripts/demo-first-payment.sh
+```
+
+The script takes a payment end to end and then proves four things: the same request
+replayed under the same idempotency key returns the original payment rather than creating
+a second one; the same key with a *different* body is rejected with `409` rather than
+silently succeeding; and a request without a credential is rejected with `401`.
+
+Or by hand:
+
+```bash
+curl -X POST localhost:8080/v1/payments \
+  -H 'Authorization: Bearer sk_test_maestro_demo_0001' \
+  -H 'Idempotency-Key: demo-1' \
+  -H 'Content-Type: application/json' \
+  -d '{"amount_minor": 1999, "currency": "AUD", "card_token": "tok_visa_4242", "confirm": true}'
+
+curl localhost:8080/v1/payments/<id> -H 'Authorization: Bearer sk_test_maestro_demo_0001'
+```
+
+If ports 8080–8082 are already taken on your machine, copy
+`deploy/compose/.env.example` to `deploy/compose/.env` and change them; the scripts follow.
+
+**Working on it locally** — Java 25 and Docker:
+
+```bash
+sdk env install && sdk env      # Temurin 25, pinned in .sdkmanrc
+./gradlew build                 # unit + architecture tests
+./gradlew integrationTest       # real PostgreSQL and Kafka via Testcontainers
 ```
 
 ---

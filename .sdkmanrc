@@ -1,0 +1,2 @@
+# Run `sdk env install` then `sdk env` to match the project toolchain.
+java=25.0.4-tem

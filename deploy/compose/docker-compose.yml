@@ -1,0 +1,128 @@
+# The whole platform, on a laptop, in one command (ADR-0010).
+#
+#   docker compose -f deploy/compose/docker-compose.yml up -d
+#
+# Host ports are overridable. Copy .env.example to .env if the defaults collide with
+# something already running on your machine; nothing inside the network changes.
+#
+# Footprint: roughly 2 GB with the three services, PostgreSQL and Kafka. The
+# observability stack arrives in Phase 4 behind a profile, so the everyday loop stays
+# light.
+
+name: maestro
+
+services:
+
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: maestro
+      POSTGRES_USER: maestro
+      POSTGRES_PASSWORD: maestro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Creates one login role and one schema per service, with no cross-grants, so
+      # "no service reads another's tables" fails at runtime rather than at review.
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+      # PostgreSQL 18 images expect the mount one level above the data directory, so
+      # that a future pg_upgrade --link does not straddle a mount boundary.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maestro -d maestro"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  kafka:
+    # KRaft, single node. The broker version matches the client version managed by the
+    # Spring Boot BOM, so local behaviour matches what the services were compiled against.
+    image: apache/kafka:4.2.1
+    ports:
+      - "${KAFKA_PORT:-19092}:19092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Two listeners: services inside the network reach kafka:9092, tools on the host
+      # reach localhost:19092. They must advertise different addresses or one of the two
+      # will be handed an address it cannot resolve.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-19092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      CLUSTER_ID: maestro-local-cluster
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  acquirer-sim:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        SERVICE: acquirer-sim
+    ports:
+      - "${ACQUIRER_SIM_PORT:-8082}:8082"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  payment-api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        SERVICE: payment-api
+    environment:
+      DB_HOST: postgres
+      DB_USER: maestro_payment
+      DB_PASSWORD: maestro_payment
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    ports:
+      - "${PAYMENT_API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  router:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        SERVICE: router
+    environment:
+      DB_HOST: postgres
+      DB_USER: maestro_routing
+      DB_PASSWORD: maestro_routing
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ACQUIRER_SIM_URL: http://acquirer-sim:8082
+    ports:
+      - "${ROUTER_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      acquirer-sim:
+        condition: service_started
+
+volumes:
+  postgres-data:

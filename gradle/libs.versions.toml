@@ -1,0 +1,48 @@
+# Single source of truth for dependency versions (ADR-0001).
+# Anything the Spring Boot BOM already manages is declared without a version.
+
+[versions]
+java = "25"
+springBoot = "4.1.0"
+archunit = "1.5.0"
+
+[libraries]
+# --- Spring Boot managed (versions come from the BOM) ---
+spring-boot-starter-web = { module = "org.springframework.boot:spring-boot-starter-web" }
+spring-boot-starter-jdbc = { module = "org.springframework.boot:spring-boot-starter-jdbc" }
+spring-boot-starter-validation = { module = "org.springframework.boot:spring-boot-starter-validation" }
+spring-boot-starter-actuator = { module = "org.springframework.boot:spring-boot-starter-actuator" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+spring-boot-testcontainers = { module = "org.springframework.boot:spring-boot-testcontainers" }
+# Boot 4 moved auto-configuration out of spring-boot-autoconfigure into a module per
+# technology. Depending on the raw library (spring-kafka, flyway-core) compiles but
+# silently activates nothing; the starter is what brings the auto-configuration.
+spring-boot-starter-kafka = { module = "org.springframework.boot:spring-boot-starter-kafka" }
+spring-boot-starter-flyway = { module = "org.springframework.boot:spring-boot-starter-flyway" }
+# RestClient.Builder is auto-configured by this module, not by starter-web.
+spring-boot-starter-restclient = { module = "org.springframework.boot:spring-boot-starter-restclient" }
+spring-kafka-test = { module = "org.springframework.kafka:spring-kafka-test" }
+postgresql = { module = "org.postgresql:postgresql" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }
+jackson-databind = { module = "tools.jackson.core:jackson-databind" }
+
+# --- Test infrastructure ---
+# Testcontainers 2.x prefixes every module artifact with "testcontainers-";
+# the 1.x coordinates (org.testcontainers:postgresql) no longer resolve.
+testcontainers-junit = { module = "org.testcontainers:testcontainers-junit-jupiter" }
+testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgresql" }
+testcontainers-kafka = { module = "org.testcontainers:testcontainers-kafka" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj-core = { module = "org.assertj:assertj-core" }
+awaitility = { module = "org.awaitility:awaitility" }
+
+# --- Architecture tests ---
+archunit-junit = { module = "com.tngtech.archunit:archunit-junit6", version.ref = "archunit" }
+
+# --- Plugin markers, so build-logic can apply plugins without repeating versions ---
+plugin-springBoot = { module = "org.springframework.boot:org.springframework.boot.gradle.plugin", version.ref = "springBoot" }
+
+[bundles]
+testing = ["junit-jupiter", "assertj-core"]
+testcontainers = ["testcontainers-junit", "testcontainers-postgresql", "testcontainers-kafka"]

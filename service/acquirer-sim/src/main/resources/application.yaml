@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: acquirer-sim
+  threads:
+    virtual:
+      enabled: true          # ADR-0002: blocking code on virtual threads, not reactive
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+
+server:
+  port: 8082
+
+maestro:
+  acquirer-sim:
+    acquirers:
+      - id: northbank
+        name: Northbank Acquiring
+        latency: 45ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    dev.maestro: INFO

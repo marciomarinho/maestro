@@ -1,0 +1,65 @@
+spring:
+  application:
+    name: router
+  threads:
+    virtual:
+      enabled: true                 # thousands of concurrent acquirer calls, blocking style
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:maestro}
+    username: ${DB_USER:maestro_routing}
+    password: ${DB_PASSWORD:maestro_routing}
+    hikari:
+      maximum-pool-size: 16
+      pool-name: router
+
+  flyway:
+    enabled: true
+    schemas: routing
+    default-schema: routing
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+    consumer:
+      group-id: router
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record              # the offset follows the effect, never precedes it
+
+server:
+  port: 8081
+
+maestro:
+  outbox:
+    schema: routing
+    poll-interval: 500ms
+    batch-size: 100
+  router:
+    request-timeout: 5s
+    acquirers:
+      - id: northbank
+        base-url: ${ACQUIRER_SIM_URL:http://localhost:8082}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    dev.maestro: INFO

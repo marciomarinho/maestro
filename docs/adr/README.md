@@ -19,6 +19,7 @@ A record is **immutable once accepted**. A decision that changes is not edited; 
 | [0011](0011-simulated-acquirers.md) | Simulated acquirers rather than real PSP sandboxes | Accepted |
 | [0012](0012-never-retry-business-declines.md) | Never retry a business decline on another acquirer | Accepted |
 | [0013](0013-idempotency-in-postgres.md) | Idempotency records in PostgreSQL, not a cache | Accepted |
+| [0014](0014-service-boundaries.md) | Four deployables, and the test each split had to pass | Accepted |
 
 ## Template
 

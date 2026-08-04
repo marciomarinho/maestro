@@ -1,0 +1,64 @@
+spring:
+  application:
+    name: payment-api
+  threads:
+    virtual:
+      enabled: true                 # ADR-0002: blocking code on virtual threads
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+
+  datasource:
+    # Connects as its own role, which holds grants on the payment schema and nothing
+    # else. Cross-service reads fail at runtime rather than at code review (ADR-0010).
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:maestro}
+    username: ${DB_USER:maestro_payment}
+    password: ${DB_PASSWORD:maestro_payment}
+    hikari:
+      maximum-pool-size: 16
+      pool-name: payment-api
+
+  flyway:
+    enabled: true
+    schemas: payment
+    default-schema: payment
+    # db/demo carries the local demo merchant and API key; it is opt-in per profile.
+    locations: classpath:db/migration,classpath:db/demo
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all                     # a lost command is a stuck payment
+    consumer:
+      group-id: payment-api
+      auto-offset-reset: earliest
+      enable-auto-commit: false     # offsets follow the effect, never precede it
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+
+server:
+  port: 8080
+
+maestro:
+  outbox:
+    schema: payment
+    poll-interval: 500ms            # the safety net; latency comes from after-commit wake-ups
+    batch-size: 100
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    dev.maestro: INFO

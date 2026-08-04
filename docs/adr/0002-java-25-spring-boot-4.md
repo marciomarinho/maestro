@@ -46,3 +46,33 @@ Faster startup and a strong native-image story, and GraalVM is already installed
 ## Revisit when
 
 A required dependency proves incompatible with Boot 4 in a way the fallback does not cover, or load testing shows virtual-thread pinning that cannot be resolved.
+
+## Implementation notes
+
+Added during Phase 1. These record what verification found; the decision above is unchanged.
+
+**Versions in use:** Java 25.0.4 (Temurin, pinned in `.sdkmanrc`), Spring Boot 4.1.0 on
+Spring Framework 7.0.8, JUnit 6.0.3, Kafka clients 4.2.1, Testcontainers 2.0.5,
+Jackson 3.1.4. The Boot 3.5.x fallback was not needed.
+
+**Boot 4 splits auto-configuration into a module per technology.** This is the one change
+that actually cost time, because it fails silently rather than loudly: depending on
+`spring-kafka` or `flyway-core` directly compiles perfectly and then activates nothing at
+runtime — Flyway simply never ran, and the first symptom was a missing table. The
+auto-configuration now lives in `spring-boot-kafka`, `spring-boot-flyway`,
+`spring-boot-restclient` and their siblings, so the corresponding **starter** is what must
+be on the classpath. Every dependency in the version catalog is now a starter for this
+reason.
+
+**Jackson 3 rather than Jackson 2**, under `tools.jackson.*`. `java.time` support is
+built in and ISO-8601 is the default, so the serialisation configuration is smaller than
+it would have been under Jackson 2.
+
+**Testcontainers 2.x** renamed both the artifacts (`testcontainers-postgresql`, not
+`postgresql`) and the container packages (`org.testcontainers.postgresql`, not
+`org.testcontainers.containers`), and `PostgreSQLContainer` is no longer self-generic.
+
+**Virtual threads** are enabled and carried the integration suite, including twelve
+concurrent requests through the same code path, with no pinning observed. The JFR
+`jdk.VirtualThreadPinned` verification promised above belongs to the Phase 4 load tests,
+where it can be measured under sustained load rather than asserted from a passing suite.

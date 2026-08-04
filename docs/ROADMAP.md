@@ -21,7 +21,7 @@ Eight phases. Each one ends with the repository in a finished, demoable state: `
 | `docs/domain.md` | Vocabulary, entities, money-handling rules, invariants |
 | `docs/architecture/api-design.md` | REST surface, idempotency semantics, errors, webhooks |
 | `docs/security/authz-model.md` | Roles, permissions, tenant isolation, PCI scope |
-| `docs/adr/0001`–`0013` | The thirteen decisions, with rejected alternatives |
+| `docs/adr/0001`–`0014` | The fourteen decisions, with rejected alternatives |
 | `docs/operations/README.md` | Runbook template and operational posture |
 | `docs/backlog.md` | Everything deliberately not built |
 

@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build, unit and architecture tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build
+        run: ./gradlew build -x integrationTest
+
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: '**/build/reports/tests/test'
+          retention-days: 7
+
+  integration-test:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Testcontainers starts real PostgreSQL and Kafka. Nothing in the data or
+      # messaging layer is mocked, so these are slower than the unit suite and run as a
+      # separate job rather than blocking fast feedback on the build.
+      - name: Integration tests
+        run: ./gradlew integrationTest
+
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: '**/build/reports/tests/integrationTest'
+          retention-days: 7
+
+  demo:
+    name: Quickstart demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Executes the README quickstart against a real Compose stack, so the
+      # documentation cannot silently stop being true.
+      - name: Start the platform
+        run: docker compose -f deploy/compose/docker-compose.yml up -d --build --wait
+
+      - name: Take a payment end to end
+        run: ./scripts/demo-first-payment.sh
+
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose -f deploy/compose/docker-compose.yml logs --tail 200
+
+      - name: Stop the platform
+        if: always()
+        run: docker compose -f deploy/compose/docker-compose.yml down -v

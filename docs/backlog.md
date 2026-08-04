@@ -75,6 +75,11 @@ Predicting approval probability per acquirer from card, issuer, amount, time and
 TigerBeetle or similar, with double-entry invariants enforced by the storage engine.
 **Deferred because** PostgreSQL constraints enforce the same invariants at this scale, and a second unfamiliar datastore would spend a reader's attention on infrastructure rather than design. See [ADR-0008](adr/0008-double-entry-projection.md).
 
+### The same modules deployed two ways
+A `monolith` Spring profile booting `payment-api`, `router` and `ledger` in a single process from the same modules, alongside the normal four-process topology.
+**Deferred because** it roughly doubles the integration-test surface — every behaviour would need verifying in both topologies, and a second topology that is not continuously tested is worse than no second topology. See [ADR-0014](adr/0014-service-boundaries.md).
+**Build when** there is capacity to test both shapes continuously; it is the strongest possible evidence that the service split is genuinely reversible.
+
 ### Multi-region deployment
 Active-active across regions, with data residency and cross-region consistency.
 **Deferred because** it cannot be demonstrated locally and would be configuration theatre rather than working software.
