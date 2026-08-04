@@ -1,0 +1,46 @@
+# Build output
+build/
+out/
+bin/
+target/
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.fleet/
+
+# OS
+.DS_Store
+
+# Node / portal
+node_modules/
+dist/
+*.local
+playwright-report/
+test-results/
+
+# Secrets & local overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+secrets/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# Logs & scratch
+*.log
+tmp/
+scratch/
