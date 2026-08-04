@@ -122,7 +122,14 @@ services:
       kafka:
         condition: service_healthy
       acquirer-sim:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      # Without this, `up --wait` reports the router ready the moment the process
+      # starts, and a demo can fire before the consumer has joined its group.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
 volumes:
   postgres-data:
