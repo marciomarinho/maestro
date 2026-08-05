@@ -1,0 +1,63 @@
+spring:
+  application:
+    name: ledger
+  threads:
+    virtual:
+      enabled: true
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: non_null
+
+  datasource:
+    # The application role. It holds SELECT and INSERT on postings and nothing more —
+    # no UPDATE, no DELETE — which is what makes append-only a privilege it does not
+    # have rather than a rule it is asked to follow (ADR-0016).
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:maestro}
+    username: ${DB_USER:maestro_ledger}
+    password: ${DB_PASSWORD:maestro_ledger}
+    hikari:
+      maximum-pool-size: 16
+      pool-name: ledger
+
+  flyway:
+    enabled: true
+    schemas: ledger
+    default-schema: ledger
+    # Migrations run as the schema owner, which is deliberately NOT the role the
+    # application uses. An owner can always grant privileges back to itself, so a single
+    # role could not make posting mutation impossible.
+    user: ${DB_MIGRATION_USER:maestro_ledger_migrator}
+    password: ${DB_MIGRATION_PASSWORD:maestro_ledger_migrator}
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ledger
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+
+server:
+  port: 8083
+
+maestro:
+  ledger:
+    ops-token: ${LEDGER_OPS_TOKEN:ops_local_token}
+    verification-interval: 5m
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    dev.maestro: INFO

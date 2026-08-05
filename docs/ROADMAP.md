@@ -21,7 +21,7 @@ Eight phases. Each one ends with the repository in a finished, demoable state: `
 | `docs/domain.md` | Vocabulary, entities, money-handling rules, invariants |
 | `docs/architecture/api-design.md` | REST surface, idempotency semantics, errors, webhooks |
 | `docs/security/authz-model.md` | Roles, permissions, tenant isolation, PCI scope |
-| `docs/adr/0001`–`0014` | The fourteen decisions, with rejected alternatives |
+| `docs/adr/0001`–`0014` | The fourteen decisions, with rejected alternatives (0015–0016 added in Phase 2) |
 | `docs/operations/README.md` | Runbook template and operational posture |
 | `docs/backlog.md` | Everything deliberately not built |
 
@@ -53,7 +53,7 @@ The thinnest possible slice that touches every layer. Nothing clever; everything
 
 ---
 
-## Phase 2 — The books
+## Phase 2 — The books ✅
 
 Money becomes real. This phase is about correctness under concurrency, not features.
 
@@ -67,11 +67,13 @@ Money becomes real. This phase is about correctness under concurrency, not featu
 
 **Demoable:** a payment is authorized, captured and partially refunded; the ledger view shows every posting, balanced, with the merchant payable and platform fee accounts moving correctly.
 
-**Done when**
-- The **double-capture race test** passes: N concurrent capture requests on the same payment against real PostgreSQL produce exactly one capture and one set of postings
-- An attempt to insert an unbalanced transaction is rejected by the database, asserted in a test
-- The balance verification job reports zero drift across a randomised transaction workload
-- Runbook: *ledger drift detected*
+**Done when** — all met
+- The **double-capture race test** passes: ten concurrent capture requests, each with a distinct idempotency key, produce exactly one capture and one instruction to the router
+- An unbalanced transaction is rejected by the database at `COMMIT`, even when inserted by raw SQL bypassing the application — a deferred constraint trigger, asserted in a test
+- `UPDATE` and `DELETE` on a posting are denied to the application role ([ADR-0016](adr/0016-separate-migration-and-application-roles.md)), asserted in a test
+- Concurrent refunds can never exceed the captured amount, asserted with ten simultaneous refunds against a balance that fits five
+- The balance verification job reports zero drift across a randomised workload, and every posting sums to zero per currency
+- Runbook: [*ledger drift detected*](operations/runbooks/ledger-drift.md)
 
 ---
 

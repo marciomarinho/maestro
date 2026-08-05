@@ -2,13 +2,14 @@
 
 **Maestro accepts payments from many merchants and routes each transaction to the best of several acquiring banks — automatically shifting traffic away from a degrading acquirer so merchants' authorization success rates stay flat — while a double-entry ledger and daily reconciliation guarantee every cent is accounted for.**
 
-> **Status: Phase 1 complete — a payment goes end to end.** Create it, confirm it, watch
-> it reach `AUTHORIZED` through the outbox, Kafka, the router and a simulated acquiring
-> bank. Retry the same request and it is still charged exactly once.
+> **Status: Phase 2 complete — the money is real and the books balance.** A payment is
+> created, authorized, captured and partially refunded, and every movement lands as
+> double-entry postings that PostgreSQL itself refuses to let go unbalanced. Retry any
+> request and it is still charged exactly once.
 > The design was settled first: see the [roadmap](docs/ROADMAP.md) and the
-> [fourteen decision records](docs/adr/README.md).
+> [sixteen decision records](docs/adr/README.md).
 
-Everything runs on a laptop — about 1.6 GB across five containers today. `docker compose up`
+Everything runs on a laptop — about 1.6 GB across six containers today. `docker compose up`
 brings up the whole platform: services, Kafka, PostgreSQL, and simulated acquiring banks
 you can break on purpose. The observability stack and the merchant portal join it in
 later phases, behind their own profiles.
@@ -81,7 +82,7 @@ Four JVM services and a web portal, each with one job. Full detail — component
 | **Security** | Four-role RBAC on permissions (not roles), per-merchant scoping with Postgres row-level security as defence in depth, `404`-not-`403` to avoid leaking existence, card data never entering the system |
 | **Operations** | End-to-end tracing of a single payment, dashboards as code, chaos experiments, runbooks written before they are needed |
 | **Full-stack range** | A polished merchant portal with a live payment feed and RBAC-gated money actions |
-| **Engineering judgement** | Fourteen decision records that say what was rejected and why, and a written backlog of everything deliberately not built |
+| **Engineering judgement** | Sixteen decision records that say what was rejected and why, and a written backlog of everything deliberately not built |
 
 ---
 
@@ -89,7 +90,7 @@ Four JVM services and a web portal, each with one job. Full detail — component
 
 - [x] **Phase 0** — Design foundation: architecture, domain, API, authorization model, 14 ADRs
 - [x] **Phase 1** — Walking skeleton: create → confirm → authorize end-to-end, running locally
-- [ ] **Phase 2** — The books: double-entry ledger, holds, capture/void/refund, race tests
+- [x] **Phase 2** — The books: double-entry ledger, holds, capture/void/refund, race tests
 - [ ] **Phase 3** — The flagship: adaptive routing, failover, circuit breakers, the brownout demo
 - [ ] **Phase 4** — The evidence: tracing, dashboards, load reports, chaos experiments
 - [ ] **Phase 5** — Settlement & reconciliation: files, matching, discrepancies, payouts, webhooks
@@ -103,18 +104,38 @@ Each phase leaves the repository in a finished, demoable state. Details and defi
 
 A payment is created and confirmed in a single database transaction that also claims the
 idempotency key and appends the authorization command to the outbox — three writes, one
-commit, so no crash can leave them disagreeing. A relay publishes the command to Kafka,
-claiming rows with a per-aggregate advisory lock so concurrent instances cannot reorder
-one payment's events. The router claims a numbered attempt, calls the acquirer with an
-idempotency key derived from it, and publishes the outcome through its own outbox. The
-API applies that outcome with a guarded conditional update, which is what makes a
-redelivered event a no-op instead of a second charge.
+commit, so no crash can leave them disagreeing. A relay publishes to Kafka, claiming rows
+with a per-aggregate advisory lock so concurrent instances cannot reorder one payment's
+events. The router claims a numbered attempt, calls the acquirer with an idempotency key
+derived from it, and publishes the outcome through its own outbox. Every state change is a
+guarded conditional update, which is what makes a redelivered event a no-op rather than a
+second charge.
 
-Tests that hold those claims up: five ArchUnit rules (the domain library stays
-framework-free, no floating-point money, no cross-service dependencies) and seven
-integration tests against real PostgreSQL and Kafka — including twelve concurrent
-identical requests producing exactly one payment, and another merchant's payment
-returning `404` rather than `403`.
+From there the payment can be captured, voided or refunded, and the ledger records what
+moved. Two details matter more than the rest. **An authorization produces no postings** —
+it creates a hold, because nothing has moved yet, and recording it as a posting is the most
+common way a payments ledger ends up inflated with money nobody has. And **postings cannot
+be edited**: the application connects as a database role holding `SELECT` and `INSERT` and
+nothing else, so append-only is a privilege it does not have rather than a rule it is asked
+to follow ([ADR-0016](docs/adr/0016-separate-migration-and-application-roles.md)).
+
+```
+$ ./scripts/demo-ledger.sh
+  CAPTURE (evt_01KZ84Z5QB6MVB3W20ZX9MGGAZ):
+    DR  acquirer_receivable:northbank:AUD  1999
+    CR  merchant_payable:mch_demo:AUD      1934
+    CR  platform_fee_revenue:platform:AUD    65
+    balance check: 0
+```
+
+**102 tests** hold these claims up. Five ArchUnit rules keep the domain library
+framework-free and floating-point money out of the codebase entirely. Eighteen integration
+tests run against real PostgreSQL and Kafka, among them: twelve concurrent identical
+requests producing exactly one payment; ten concurrent captures producing exactly one
+capture; ten concurrent refunds against a captured amount that only five can fit into; an
+unbalanced journal transaction refused at `COMMIT` by a deferred constraint trigger even
+when inserted by raw SQL; `UPDATE` and `DELETE` on a posting denied by the database; and
+fee arithmetic that reconstructs the gross exactly across a million amounts.
 
 ---
 
@@ -128,7 +149,7 @@ returning `404` rather than `403`.
 | [Domain model](docs/domain.md) | Payments vocabulary, entities, money-handling rules, invariants |
 | [API design](docs/architecture/api-design.md) | REST surface, idempotency, errors, pagination, webhooks |
 | [Authorization model](docs/security/authz-model.md) | Roles, permissions, tenant isolation, PCI scope boundary |
-| [Decision records](docs/adr/README.md) | Fourteen ADRs — the trade-offs, including the rejected options |
+| [Decision records](docs/adr/README.md) | Sixteen ADRs — the trade-offs, including the rejected options |
 | [Operations](docs/operations/README.md) | Runbooks and the incident-response posture |
 | [Backlog](docs/backlog.md) | Consciously deferred work, with the reasoning |
 
@@ -143,12 +164,15 @@ CI job runs exactly these commands, so they cannot silently stop working.
 git clone <this repo> && cd maestro
 docker compose -f deploy/compose/docker-compose.yml up -d --wait
 ./scripts/demo-first-payment.sh
+./scripts/demo-ledger.sh
 ```
 
-The script takes a payment end to end and then proves four things: the same request
-replayed under the same idempotency key returns the original payment rather than creating
-a second one; the same key with a *different* body is rejected with `409` rather than
-silently succeeding; and a request without a credential is rejected with `401`.
+The first script takes a payment end to end — authorized and captured — and then proves
+that the same request replayed under the same idempotency key returns the original payment
+rather than creating a second one, that the same key with a *different* body is rejected
+with `409` rather than silently succeeding, and that a request without a credential is
+rejected with `401`. The second captures, partially refunds, and prints the resulting
+double-entry postings with their balance check.
 
 Or by hand:
 

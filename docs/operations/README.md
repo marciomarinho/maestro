@@ -23,7 +23,7 @@ Each lands with its phase. None are written speculatively for components that do
 | Runbook | Signal | Phase |
 |---|---|---|
 | Dead-letter queue growth | DLQ depth rising | 2 |
-| Ledger drift detected | Balance verification reports non-zero drift | 2 |
+| [Ledger drift detected](runbooks/ledger-drift.md) | Balance verification reports non-zero drift | 2 |
 | Acquirer brownout | Corridor health score collapse, success rate dip | 3 |
 | Circuit breaker stuck open | Breaker open beyond its expected probe cycle | 3 |
 | Consumer lag | Kafka consumer group lag above threshold | 4 |

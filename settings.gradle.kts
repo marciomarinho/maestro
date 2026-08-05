@@ -30,4 +30,5 @@ include("lib:lib-testing")
 // Deployable services. Services depend on libraries, never on each other (ADR-0001).
 include("service:payment-api")
 include("service:router")
+include("service:ledger")
 include("service:acquirer-sim")

@@ -47,7 +47,7 @@ The project is complete when all of the following are true — and not before an
 - "Merchant A cannot see merchant B's data" — a parameterised isolation test across every merchant-scoped endpoint.
 - "It performs" — published load reports with the bottleneck that was found, the fix, and before/after numbers.
 
-**Explained.** Architecture documents with diagrams, fourteen decision records naming what was rejected, operational runbooks for the failure modes that actually occur, and a backlog listing the deliberate omissions.
+**Explained.** Architecture documents with diagrams, sixteen decision records naming what was rejected, operational runbooks for the failure modes that actually occur, and a backlog listing the deliberate omissions.
 
 **Finished-looking at every checkpoint.** Nothing is scaffolded before its phase begins. An unchecked roadmap box reads as planning; an empty directory reads as abandonment.
 

@@ -13,6 +13,9 @@ public record Payment(
         String currency,
         long capturedAmountMinor,
         long refundedAmountMinor,
+        // Refunds requested but not yet confirmed. Reserving up front is what stops two
+        // concurrent refunds from together exceeding what was captured.
+        long refundReservedMinor,
         String cardToken,
         String cardNetwork,
         String cardLast4,
@@ -40,5 +43,10 @@ public record Payment(
 
     public Money refundedAmount() {
         return Money.of(refundedAmountMinor, currency);
+    }
+
+    /** What may still be refunded: captured, less anything already refunded or in flight. */
+    public Money refundableAmount() {
+        return Money.of(capturedAmountMinor - refundReservedMinor, currency);
     }
 }

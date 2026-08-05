@@ -21,6 +21,7 @@ RUN --mount=type=cache,target=/root/.gradle \
     ./gradlew --no-daemon \
       :service:payment-api:bootJar \
       :service:router:bootJar \
+      :service:ledger:bootJar \
       :service:acquirer-sim:bootJar
 
 FROM eclipse-temurin:25-jre AS runtime

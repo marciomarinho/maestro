@@ -14,9 +14,25 @@ CREATE ROLE maestro_routing LOGIN PASSWORD 'maestro_routing';
 CREATE SCHEMA payment AUTHORIZATION maestro_payment;
 CREATE SCHEMA routing AUTHORIZATION maestro_routing;
 
+-- The ledger is the exception: it needs *two* roles, not one (ADR-0016).
+--
+-- ADR-0008 promises that UPDATE and DELETE on postings are impossible rather than
+-- merely forbidden. A single role cannot deliver that, because the role that runs the
+-- migrations owns the tables, and an owner can always grant privileges back to itself.
+-- So migrations run as the owner and the application connects as a separate role that
+-- is granted SELECT and INSERT on postings and nothing more. The migration itself
+-- issues those grants, at the end of V1.
+CREATE ROLE maestro_ledger_migrator LOGIN PASSWORD 'maestro_ledger_migrator';
+CREATE ROLE maestro_ledger LOGIN PASSWORD 'maestro_ledger';
+
+CREATE SCHEMA ledger AUTHORIZATION maestro_ledger_migrator;
+GRANT USAGE ON SCHEMA ledger TO maestro_ledger;
+
 -- Each role sees only its own schema. Omitting the cross-grants is the enforcement.
 ALTER ROLE maestro_payment SET search_path = payment;
 ALTER ROLE maestro_routing SET search_path = routing;
+ALTER ROLE maestro_ledger_migrator SET search_path = ledger;
+ALTER ROLE maestro_ledger SET search_path = ledger;
 
 -- Nothing belongs in the default schema; leaving it writable invites accidental
 -- cross-service tables that would bypass the separation above.

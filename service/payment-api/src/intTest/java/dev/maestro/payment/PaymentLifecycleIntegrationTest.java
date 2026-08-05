@@ -78,7 +78,8 @@ class PaymentLifecycleIntegrationTest {
 
     @BeforeEach
     void resetState() {
-        jdbc.sql("TRUNCATE payment.outbox_event, payment.idempotency_record, payment.payment CASCADE")
+        jdbc.sql("TRUNCATE payment.refund, payment.outbox_event, payment.idempotency_record, "
+                        + "payment.payment CASCADE")
                 .update();
     }
 
@@ -194,7 +195,154 @@ class PaymentLifecycleIntegrationTest {
         assertThat(response.statusCode()).isEqualTo(404);
     }
 
+    @Test
+    @DisplayName("concurrent captures of one payment produce exactly one capture")
+    void concurrentCapturesProduceOneCapture() throws Exception {
+        // Every request carries a *different* idempotency key, so this is not the
+        // idempotency mechanism being retested — it is the guarded state transition. Two
+        // genuinely separate requests racing must still capture once, or the merchant is
+        // charged twice for one order.
+        String paymentId = json(createPayment("capture-race", 5000L, API_KEY)).get("id").asString();
+        markAuthorized(paymentId);
+
+        int concurrency = 10;
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Integer> statuses = pool.invokeAll(IntStream.range(0, concurrency)
+                            .<Callable<HttpResponse<String>>>mapToObj(
+                                    i -> () -> capture(paymentId, "capture-race-" + i))
+                            .toList())
+                    .stream()
+                    .map(PaymentLifecycleIntegrationTest::get)
+                    .map(HttpResponse::statusCode)
+                    .toList();
+
+            assertThat(statuses).filteredOn(status -> status == 202).hasSize(1);
+            assertThat(statuses).filteredOn(status -> status == 409).hasSize(concurrency - 1);
+        }
+
+        assertThat(outboxCount(paymentId, EventTypes.CAPTURE_REQUESTED))
+                .as("exactly one capture instruction may reach the router")
+                .isEqualTo(1);
+        assertThat(statusOf(paymentId)).isEqualTo("CAPTURING");
+    }
+
+    @Test
+    @DisplayName("concurrent refunds can never exceed what was captured")
+    void concurrentRefundsCannotExceedCaptured() throws Exception {
+        String paymentId = json(createPayment("refund-race", 1000L, API_KEY)).get("id").asString();
+        markCaptured(paymentId, 1000L);
+
+        // Ten simultaneous refunds of 200 against 1000 captured. Five can succeed; the
+        // rest must be refused. A read-then-write check would let all ten through.
+        int concurrency = 10;
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Integer> statuses = pool.invokeAll(IntStream.range(0, concurrency)
+                            .<Callable<HttpResponse<String>>>mapToObj(
+                                    i -> () -> refund(paymentId, "refund-race-" + i, 200L))
+                            .toList())
+                    .stream()
+                    .map(PaymentLifecycleIntegrationTest::get)
+                    .map(HttpResponse::statusCode)
+                    .toList();
+
+            assertThat(statuses).filteredOn(status -> status == 202).hasSize(5);
+            assertThat(statuses).filteredOn(status -> status == 422).hasSize(5);
+        }
+
+        assertThat(reservedMinor(paymentId))
+                .as("reserved refunds may never exceed the captured amount")
+                .isEqualTo(1000L);
+    }
+
+    @Test
+    @DisplayName("a capture larger than the authorization is refused")
+    void captureCannotExceedTheAuthorization() {
+        String paymentId = json(createPayment("over-capture", 1000L, API_KEY)).get("id").asString();
+        markAuthorized(paymentId);
+
+        HttpResponse<String> response = send(HttpRequest.newBuilder()
+                .uri(uri("/v1/payments/" + paymentId + "/capture"))
+                .header("Authorization", "Bearer " + API_KEY)
+                .header("Idempotency-Key", "over-capture-1")
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"amount_minor\": 2000}"))
+                .build());
+
+        assertThat(response.statusCode()).isEqualTo(422);
+        assertThat(json(response).get("code").asString()).isEqualTo("capture_exceeds_authorized");
+    }
+
     // --- helpers -----------------------------------------------------------
+
+    private HttpResponse<String> capture(String paymentId, String idempotencyKey) {
+        return send(HttpRequest.newBuilder()
+                .uri(uri("/v1/payments/" + paymentId + "/capture"))
+                .header("Authorization", "Bearer " + API_KEY)
+                .header("Idempotency-Key", idempotencyKey)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build());
+    }
+
+    private HttpResponse<String> refund(String paymentId, String idempotencyKey, long amountMinor) {
+        return send(HttpRequest.newBuilder()
+                .uri(uri("/v1/payments/" + paymentId + "/refunds"))
+                .header("Authorization", "Bearer " + API_KEY)
+                .header("Idempotency-Key", idempotencyKey)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        "{\"amount_minor\": " + amountMinor + "}"))
+                .build());
+    }
+
+    /** Puts a payment where the router would have, without needing the router running. */
+    private void markAuthorized(String paymentId) {
+        jdbc.sql("""
+                UPDATE payment.payment
+                   SET status = 'AUTHORIZED', acquirer_id = 'northbank',
+                       acquirer_reference = 'northbank_test', authorized_at = now(),
+                       authorization_expires_at = now() + INTERVAL '7 days'
+                 WHERE id = :id
+                """).param("id", paymentId).update();
+    }
+
+    private void markCaptured(String paymentId, long capturedMinor) {
+        jdbc.sql("""
+                UPDATE payment.payment
+                   SET status = 'CAPTURED', captured_amount_minor = :captured,
+                       acquirer_id = 'northbank', acquirer_reference = 'northbank_test'
+                 WHERE id = :id
+                """)
+                .param("id", paymentId)
+                .param("captured", capturedMinor)
+                .update();
+    }
+
+    private String statusOf(String paymentId) {
+        return jdbc.sql("SELECT status FROM payment.payment WHERE id = :id")
+                .param("id", paymentId)
+                .query(String.class)
+                .single();
+    }
+
+    private long reservedMinor(String paymentId) {
+        return jdbc.sql("SELECT refund_reserved_minor FROM payment.payment WHERE id = :id")
+                .param("id", paymentId)
+                .query(Long.class)
+                .single();
+    }
+
+    private long outboxCount(String paymentId, String eventType) {
+        return jdbc.sql("""
+                SELECT count(*) FROM payment.outbox_event
+                 WHERE aggregate_id = :id AND event_type = :eventType
+                """)
+                .param("id", paymentId)
+                .param("eventType", eventType)
+                .query(Long.class)
+                .single();
+    }
+
 
     private HttpResponse<String> createPayment(String idempotencyKey, long amountMinor, String apiKey) {
         String body = """

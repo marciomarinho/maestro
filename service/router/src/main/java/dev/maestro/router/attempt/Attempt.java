@@ -25,6 +25,9 @@ public record Attempt(
         String acquirerReference) {
 
     public static final String OPERATION_AUTHORIZE = "AUTHORIZE";
+    public static final String OPERATION_CAPTURE = "CAPTURE";
+    public static final String OPERATION_REFUND = "REFUND";
+    public static final String OPERATION_VOID = "VOID";
     public static final String OUTCOME_IN_FLIGHT = "IN_FLIGHT";
 
     public boolean isInFlight() {

@@ -58,17 +58,18 @@ PAYMENT_ID=$(echo "$RESPONSE" | jq -r .id)
 [ "$PAYMENT_ID" != "null" ] || fail "no payment id returned"
 ok "created $PAYMENT_ID"
 
-bold "3. Waiting for the acquirer's answer"
+bold "3. Waiting for the acquirer"
 dim "   payment-api -> outbox -> Kafka -> router -> acquirer-sim -> Kafka -> payment-api"
+dim "   capture_method defaults to AUTOMATIC, so it authorizes and then captures"
 STATUS=""
 for _ in $(seq 1 30); do
   STATUS=$(curl -sS "$API/v1/payments/$PAYMENT_ID" -H "Authorization: Bearer $KEY" | jq -r .status)
-  [ "$STATUS" = "AUTHORIZING" ] || break
+  [ "$STATUS" = "CAPTURED" ] && break
   sleep 1
 done
-[ "$STATUS" = "AUTHORIZED" ] || fail "expected AUTHORIZED, got $STATUS"
+[ "$STATUS" = "CAPTURED" ] || fail "expected CAPTURED, got $STATUS"
 curl -sS "$API/v1/payments/$PAYMENT_ID" -H "Authorization: Bearer $KEY" | jq .
-ok "authorized"
+ok "authorized and captured"
 
 bold "4. Replaying the same request with the same idempotency key"
 REPLAY_HEADERS=$(mktemp)
@@ -101,4 +102,4 @@ UNAUTHORIZED=$(curl -sS -o /dev/null -w '%{http_code}' "$API/v1/payments/$PAYMEN
 ok "rejected with 401"
 
 printf '\n'
-bold "Payment $PAYMENT_ID authorized exactly once."
+bold "Payment $PAYMENT_ID captured exactly once."

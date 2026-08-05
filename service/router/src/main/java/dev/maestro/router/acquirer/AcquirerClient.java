@@ -5,6 +5,7 @@ import dev.maestro.domain.acquirer.DeclineCode;
 import dev.maestro.router.RouterProperties;
 import java.time.Duration;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +23,9 @@ import org.springframework.web.client.RestClient;
  * merely looks like it does — in particular, an issuer-side systems failure arrives
  * dressed as a decline but must be classified as a technical failure, or the platform
  * will treat a transient outage as a customer's card being refused (ADR-0012).
+ *
+ * <p>Every call carries an idempotency key derived from the attempt, so retrying an
+ * operation cannot perform it twice at the acquirer.
  */
 @Component
 public class AcquirerClient {
@@ -59,24 +63,48 @@ public class AcquirerClient {
 
     public AcquirerOutcome authorize(
             String acquirerId, String idempotencyKey, AuthorizeRequest request) {
+        return call(acquirerId, idempotencyKey, "authorize", request);
+    }
+
+    public AcquirerOutcome capture(
+            String acquirerId, String idempotencyKey, CaptureRequest request) {
+        return call(acquirerId, idempotencyKey, "capture", request);
+    }
+
+    public AcquirerOutcome refund(String acquirerId, String idempotencyKey, RefundRequest request) {
+        return call(acquirerId, idempotencyKey, "refund", request);
+    }
+
+    public AcquirerOutcome voidAuthorization(
+            String acquirerId, String idempotencyKey, VoidRequest request) {
+        return call(acquirerId, idempotencyKey, "void", request);
+    }
+
+    private AcquirerOutcome call(
+            String acquirerId, String idempotencyKey, String operation, Object request) {
 
         RestClient client = clients.get(acquirerId);
         if (client == null) {
             throw new IllegalStateException("No client configured for acquirer " + acquirerId);
         }
 
+        return interpretFailures(acquirerId, idempotencyKey, () -> interpret(client.post()
+                .uri("/acquirer/{acquirerId}/{operation}", acquirerId, operation)
+                .header("Idempotency-Key", idempotencyKey)
+                .body(request)
+                .retrieve()
+                .body(AcquirerResponse.class)));
+    }
+
+    private AcquirerOutcome interpretFailures(
+            String acquirerId, String idempotencyKey, Supplier<AcquirerOutcome> call) {
         try {
-            return interpret(client.post()
-                    .uri("/acquirer/{acquirerId}/authorize", acquirerId)
-                    .header("Idempotency-Key", idempotencyKey)
-                    .body(request)
-                    .retrieve()
-                    .body(AuthorizeResponse.class));
+            return call.get();
         } catch (ResourceAccessException e) {
-            // No response arrived, so the transaction's fate is unknown — the acquirer
-            // may have authorized it. Deliberately a Timeout rather than a technical
-            // failure: this must be resolved with the same acquirer and the same
-            // idempotency key, never by asking a different bank.
+            // No response arrived, so the operation's fate is unknown — the acquirer may
+            // have performed it. Deliberately a Timeout rather than a technical failure:
+            // this must be resolved with the same acquirer and the same idempotency key,
+            // never by asking a different bank.
             log.warn("acquirer={} no response for idempotencyKey={}", acquirerId, idempotencyKey, e);
             return new AcquirerOutcome.Timeout(0L);
         } catch (RuntimeException e) {
@@ -85,7 +113,7 @@ public class AcquirerClient {
         }
     }
 
-    private static AcquirerOutcome interpret(AuthorizeResponse response) {
+    private static AcquirerOutcome interpret(AcquirerResponse response) {
         if (response == null) {
             return new AcquirerOutcome.TechnicalFailure("EMPTY_RESPONSE", "Acquirer returned no body");
         }
@@ -112,7 +140,7 @@ public class AcquirerClient {
         }
     }
 
-    /** What the platform sends an acquirer. Carries a token; never a card number. */
+    /** What the platform sends an acquirer to obtain an authorization. Tokens only. */
     public record AuthorizeRequest(
             String paymentId,
             String merchantId,
@@ -122,8 +150,29 @@ public class AcquirerClient {
             String cardNetwork) {
     }
 
-    /** What an acquirer answers. */
-    public record AuthorizeResponse(
+    /** Takes funds an authorization reserved. May be for less than was authorized. */
+    public record CaptureRequest(
+            String paymentId,
+            String acquirerReference,
+            long amountMinor,
+            String currency) {
+    }
+
+    /** Returns captured funds. A separate movement, with its own reference. */
+    public record RefundRequest(
+            String refundId,
+            String paymentId,
+            String acquirerReference,
+            long amountMinor,
+            String currency) {
+    }
+
+    /** Releases an authorization before capture. */
+    public record VoidRequest(String paymentId, String acquirerReference) {
+    }
+
+    /** What an acquirer answers, for any operation. */
+    public record AcquirerResponse(
             String outcome,
             String acquirerReference,
             String authorizationCode,

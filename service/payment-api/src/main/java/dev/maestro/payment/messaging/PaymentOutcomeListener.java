@@ -6,85 +6,65 @@ import dev.maestro.events.Topics;
 import dev.maestro.events.payload.AuthorizationDeclined;
 import dev.maestro.events.payload.AuthorizationFailed;
 import dev.maestro.events.payload.AuthorizationSucceeded;
-import dev.maestro.payment.core.PaymentRepository;
+import dev.maestro.events.payload.CaptureFailed;
+import dev.maestro.events.payload.CaptureSucceeded;
+import dev.maestro.events.payload.RefundFailed;
+import dev.maestro.events.payload.RefundSucceeded;
+import dev.maestro.events.payload.VoidFailed;
+import dev.maestro.events.payload.VoidSucceeded;
+import dev.maestro.payment.core.PaymentLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Applies acquirer outcomes to the payment state machine.
+ * Routes acquirer outcomes to the state machine.
  *
- * <p>This consumer keeps <em>no</em> deduplication table, deliberately. Its only effect
- * is a guarded conditional update, which is already idempotent: a redelivered event
- * finds the payment no longer in {@code AUTHORIZING} and changes zero rows. Adding a
- * processed-events table here would be redundant machinery guarding something the
- * database already guarantees (ADR-0006).
- *
- * <p>Offsets are committed after the listener returns (record acknowledgement mode), so
- * a crash mid-processing redelivers rather than loses.
+ * <p>Offsets are committed after the listener returns, so a crash mid-processing
+ * redelivers rather than loses. Redelivery is harmless because every transition
+ * downstream is guarded.
  */
 @Component
 public class PaymentOutcomeListener {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentOutcomeListener.class);
 
-    private final PaymentRepository payments;
+    private final PaymentLifecycleService lifecycle;
     private final EventCodec codec;
 
-    public PaymentOutcomeListener(PaymentRepository payments, EventCodec codec) {
-        this.payments = payments;
+    public PaymentOutcomeListener(PaymentLifecycleService lifecycle, EventCodec codec) {
+        this.lifecycle = lifecycle;
         this.codec = codec;
     }
 
     @KafkaListener(topics = Topics.PAYMENT_EVENTS, groupId = "payment-api")
-    @Transactional
     public void onPaymentEvent(String message) {
         String eventType = codec.peekEventType(message);
         switch (eventType) {
-            case EventTypes.AUTHORIZATION_SUCCEEDED -> applyAuthorized(message);
-            case EventTypes.AUTHORIZATION_DECLINED -> applyDeclined(message);
-            case EventTypes.AUTHORIZATION_FAILED -> applyFailed(message);
+            case EventTypes.AUTHORIZATION_SUCCEEDED -> lifecycle.onAuthorized(
+                    codec.deserialize(message, AuthorizationSucceeded.class).payload());
+            case EventTypes.AUTHORIZATION_DECLINED -> lifecycle.onDeclined(
+                    codec.deserialize(message, AuthorizationDeclined.class).payload());
+            case EventTypes.AUTHORIZATION_FAILED -> lifecycle.onAuthorizationFailed(
+                    codec.deserialize(message, AuthorizationFailed.class).payload());
+            case EventTypes.CAPTURE_SUCCEEDED -> lifecycle.onCaptured(
+                    codec.deserialize(message, CaptureSucceeded.class).payload());
+            case EventTypes.CAPTURE_FAILED -> lifecycle.onCaptureFailed(
+                    codec.deserialize(message, CaptureFailed.class).payload());
+            case EventTypes.VOID_SUCCEEDED -> lifecycle.onVoided(
+                    codec.deserialize(message, VoidSucceeded.class).payload());
+            case EventTypes.VOID_FAILED -> lifecycle.onVoidFailed(
+                    codec.deserialize(message, VoidFailed.class).payload());
+            case EventTypes.REFUND_SUCCEEDED -> lifecycle.onRefunded(
+                    codec.deserialize(message, RefundSucceeded.class).payload());
+            case EventTypes.REFUND_FAILED -> lifecycle.onRefundFailed(
+                    codec.deserialize(message, RefundFailed.class).payload());
             // An unrecognised type is skipped rather than fatal, so a producer can
-            // introduce an event before every consumer knows about it.
+            // introduce an event before every consumer knows about it. The expiry event
+            // this service publishes lands here too and is deliberately ignored — the
+            // payment was already marked expired in the transaction that emitted it.
             default -> log.debug("Ignoring event of type {}", eventType);
-        }
-    }
-
-    private void applyAuthorized(String message) {
-        AuthorizationSucceeded event =
-                codec.deserialize(message, AuthorizationSucceeded.class).payload();
-        int updated = payments.markAuthorized(
-                event.paymentId(),
-                event.acquirerId(),
-                event.acquirerReference(),
-                event.authorizationCode());
-        logOutcome("AUTHORIZED", event.paymentId(), updated);
-    }
-
-    private void applyDeclined(String message) {
-        AuthorizationDeclined event =
-                codec.deserialize(message, AuthorizationDeclined.class).payload();
-        int updated = payments.markDeclined(
-                event.paymentId(), event.acquirerId(), event.declineCode(), event.message());
-        logOutcome("DECLINED", event.paymentId(), updated);
-    }
-
-    private void applyFailed(String message) {
-        AuthorizationFailed event = codec.deserialize(message, AuthorizationFailed.class).payload();
-        int updated = payments.markFailed(event.paymentId(), event.reason());
-        logOutcome("FAILED", event.paymentId(), updated);
-    }
-
-    private static void logOutcome(String outcome, String paymentId, int rowsUpdated) {
-        if (rowsUpdated == 0) {
-            log.debug(
-                    "payment={} already past AUTHORIZING; {} event absorbed as a duplicate",
-                    paymentId,
-                    outcome);
-        } else {
-            log.info("payment={} status={}", paymentId, outcome);
         }
     }
 }

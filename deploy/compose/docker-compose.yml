@@ -102,6 +102,35 @@ services:
       timeout: 5s
       retries: 12
 
+  ledger:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        SERVICE: ledger
+    environment:
+      DB_HOST: postgres
+      # Two roles, deliberately (ADR-0016): migrations run as the schema owner, the
+      # application connects as a role that cannot UPDATE or DELETE a posting.
+      DB_USER: maestro_ledger
+      DB_PASSWORD: maestro_ledger
+      DB_MIGRATION_USER: maestro_ledger_migrator
+      DB_MIGRATION_PASSWORD: maestro_ledger_migrator
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LEDGER_OPS_TOKEN: ${LEDGER_OPS_TOKEN:-ops_local_token}
+    ports:
+      - "${LEDGER_PORT:-8083}:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8083/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   router:
     build:
       context: ../..
