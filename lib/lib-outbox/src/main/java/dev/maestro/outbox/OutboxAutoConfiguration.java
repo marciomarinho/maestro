@@ -1,9 +1,11 @@
 package dev.maestro.outbox;
 
 import dev.maestro.events.EventCodec;
+import dev.maestro.events.Topics;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -17,6 +19,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -43,6 +46,54 @@ public class OutboxAutoConfiguration {
     @ConditionalOnMissingBean
     public EventCodec eventCodec() {
         return new EventCodec();
+    }
+
+    /**
+     * Declares the platform's topics rather than letting the broker invent them.
+     *
+     * <p>Auto-created topics get the broker's default partition count, which is one. That
+     * quietly repeals ADR-0005: partitioning by payment exists so that unrelated payments
+     * are processed independently, and with a single partition every payment in the
+     * platform queues behind every other one. It costs nothing while acquirers answer in
+     * forty milliseconds, and it is why a brownout — where one unresolved authorization
+     * holds its thread for seconds — stalls traffic that has nothing to do with the
+     * acquirer that is unwell.
+     *
+     * <p>Declared here because the module that publishes an event is the one that should
+     * guarantee somewhere to publish it to. {@code KafkaAdmin} applies these at startup
+     * and will raise the partition count of an existing topic, so an environment created
+     * before this existed is corrected rather than left behind.
+     */
+    @Bean
+    public NewTopic paymentCommandsTopic(OutboxProperties properties) {
+        return topic(Topics.PAYMENT_COMMANDS, properties);
+    }
+
+    @Bean
+    public NewTopic paymentEventsTopic(OutboxProperties properties) {
+        return topic(Topics.PAYMENT_EVENTS, properties);
+    }
+
+    /**
+     * The dead-letter topic, deliberately single-partition.
+     *
+     * <p>Nothing consumes it automatically — it exists so an operator can look at what
+     * failed and redrive it — and a single partition keeps that inspection in one place
+     * and in order.
+     */
+    @Bean
+    public NewTopic paymentCommandsDlqTopic(OutboxProperties properties) {
+        return TopicBuilder.name(Topics.PAYMENT_COMMANDS_DLQ)
+                .partitions(1)
+                .replicas(properties.topicReplicas())
+                .build();
+    }
+
+    private static NewTopic topic(String name, OutboxProperties properties) {
+        return TopicBuilder.name(name)
+                .partitions(properties.topicPartitions())
+                .replicas(properties.topicReplicas())
+                .build();
     }
 
     @Bean

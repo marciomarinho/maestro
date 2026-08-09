@@ -124,6 +124,11 @@ public class AcquirerClient {
                     declineCodeOf(response.responseCode()), response.responseMessage());
             case "DECLINED_TECHNICAL" -> new AcquirerOutcome.TechnicalFailure(
                     response.responseCode(), response.responseMessage());
+            // Refused at the door on capacity grounds. Nothing was decided and nothing was
+            // even attempted, so unlike a timeout this is safe to take to another acquirer
+            // immediately — there is no ambiguity about whether money moved.
+            case "THROTTLED" -> new AcquirerOutcome.Throttled(
+                    response.retryAfterMillis() == null ? 0L : response.retryAfterMillis());
             default -> new AcquirerOutcome.TechnicalFailure(
                     "UNMAPPED_OUTCOME", "Unrecognised acquirer outcome: " + response.outcome());
         };
@@ -177,6 +182,7 @@ public class AcquirerClient {
             String acquirerReference,
             String authorizationCode,
             String responseCode,
-            String responseMessage) {
+            String responseMessage,
+            Long retryAfterMillis) {
     }
 }

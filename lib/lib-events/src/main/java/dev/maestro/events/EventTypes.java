@@ -32,6 +32,15 @@ public final class EventTypes {
     public static final String REFUND_SUCCEEDED = "payment.refund_succeeded";
     public static final String REFUND_FAILED = "payment.refund_failed";
 
+    /**
+     * One acquirer call was made and answered.
+     *
+     * <p>Not a lifecycle fact — nothing transitions because of it. It exists so the
+     * routing decision can be explained to the merchant who paid for it, including the
+     * attempts that failed on the way to the one that worked.
+     */
+    public static final String ATTEMPT_RECORDED = "payment.attempt_recorded";
+
     private EventTypes() {
     }
 }

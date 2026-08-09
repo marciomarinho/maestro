@@ -12,10 +12,20 @@ server:
 
 maestro:
   acquirer-sim:
+    # Three acquirers, all healthy, differing only in how quickly they answer. Nothing
+    # here says which is cheapest — that is the platform's commercial agreement, not
+    # something an acquirer tells you — and nothing says which is best, because the
+    # router is supposed to find that out from live traffic rather than be told.
     acquirers:
+      - id: southcross
+        name: Southcross Payments
+        latency: 32ms
       - id: northbank
         name: Northbank Acquiring
         latency: 45ms
+      - id: meridian
+        name: Meridian Card Services
+        latency: 68ms
 
 management:
   endpoints:

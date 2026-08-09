@@ -22,6 +22,7 @@ A record is **immutable once accepted**. A decision that changes is not edited; 
 | [0014](0014-service-boundaries.md) | Four deployables, and the test each split had to pass | Accepted |
 | [0015](0015-fee-calculation-and-rounding.md) | Fee calculation: integer, half-up, merchant absorbs the remainder | Accepted |
 | [0016](0016-separate-migration-and-application-roles.md) | Separate migration and application database roles for the ledger | Accepted |
+| [0017](0017-attempt-history-as-a-projection.md) | Expose the routing audit trail as a projection, not a cross-service read | Accepted |
 
 ## Template
 

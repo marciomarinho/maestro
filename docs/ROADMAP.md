@@ -77,7 +77,7 @@ Money becomes real. This phase is about correctness under concurrency, not featu
 
 ---
 
-## Phase 3 — The flagship
+## Phase 3 — The flagship ✅
 
 The reason the project exists. Everything before this was table stakes.
 
@@ -94,13 +94,13 @@ The reason the project exists. Everything before this was table stakes.
 
 **Demoable:** `./scripts/demo-brownout.sh`. Steady traffic across two acquirers. Acquirer A is degraded live. The dashboard shows its health score collapse, traffic shift to acquirer B, failed authorizations cascade successfully, the breaker open and later half-open — and the merchant-visible success rate barely move. A is healed; exploration traffic detects it; the split returns to normal.
 
-**Done when**
-- **Traffic-shift test:** after an acquirer's technical failure rate is raised, its share of traffic drops below a threshold within a bounded time
-- **Success-rate floor test:** end-to-end approval rate during a single-acquirer brownout stays above a stated floor
-- **Recovery test:** a healed acquirer regains traffic — proving the exploration floor works, which a pure argmax router would fail
-- **No-retry-on-decline test:** a business decline is never re-attempted on another acquirer
-- **Retry-budget test:** under a total-outage scenario, attempts per second stay bounded
-- Runbooks: *acquirer brownout*, *circuit breaker stuck open*
+**Done when** — all met
+- **Traffic-shift test:** a degraded acquirer falls below 10% of its corridor within ~60 seconds. Measured, not derived: demotion is self-damping, because an acquirer receiving less traffic produces less of the evidence that condemns it
+- **Success-rate floor test:** merchant-visible acceptance held at **100%** through a brownout of the acquirer carrying 75% of the corridor
+- **Recovery test:** a healed acquirer climbs back from 24% to 45% on exploration traffic alone. The companion test is sharper than planned — under pure argmax the demoted acquirer's evidence decays to **zero samples** and its reading returns to the optimistic prior, so the router does not merely fail to detect recovery, it *fabricates* one ([routing.md](architecture/routing.md))
+- **No-retry-on-decline test:** with every acquirer declining, a payment is refused once by one acquirer and never re-presented
+- **Retry-budget test:** extra attempts stay under a tenth of request volume during a total outage
+- Runbooks: [*acquirer brownout*](operations/runbooks/acquirer-brownout.md), [*circuit breaker stuck open*](operations/runbooks/circuit-breaker-stuck-open.md)
 
 ---
 

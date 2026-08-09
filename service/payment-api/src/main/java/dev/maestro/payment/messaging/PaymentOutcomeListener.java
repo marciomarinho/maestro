@@ -3,6 +3,7 @@ package dev.maestro.payment.messaging;
 import dev.maestro.events.EventCodec;
 import dev.maestro.events.EventTypes;
 import dev.maestro.events.Topics;
+import dev.maestro.events.payload.AttemptRecorded;
 import dev.maestro.events.payload.AuthorizationDeclined;
 import dev.maestro.events.payload.AuthorizationFailed;
 import dev.maestro.events.payload.AuthorizationSucceeded;
@@ -12,6 +13,7 @@ import dev.maestro.events.payload.RefundFailed;
 import dev.maestro.events.payload.RefundSucceeded;
 import dev.maestro.events.payload.VoidFailed;
 import dev.maestro.events.payload.VoidSucceeded;
+import dev.maestro.payment.attempt.AttemptProjection;
 import dev.maestro.payment.core.PaymentLifecycleService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,10 +33,13 @@ public class PaymentOutcomeListener {
     private static final Logger log = LoggerFactory.getLogger(PaymentOutcomeListener.class);
 
     private final PaymentLifecycleService lifecycle;
+    private final AttemptProjection attempts;
     private final EventCodec codec;
 
-    public PaymentOutcomeListener(PaymentLifecycleService lifecycle, EventCodec codec) {
+    public PaymentOutcomeListener(
+            PaymentLifecycleService lifecycle, AttemptProjection attempts, EventCodec codec) {
         this.lifecycle = lifecycle;
+        this.attempts = attempts;
         this.codec = codec;
     }
 
@@ -60,6 +65,10 @@ public class PaymentOutcomeListener {
                     codec.deserialize(message, RefundSucceeded.class).payload());
             case EventTypes.REFUND_FAILED -> lifecycle.onRefundFailed(
                     codec.deserialize(message, RefundFailed.class).payload());
+            // The only event here that changes no state. It is projected purely so the
+            // routing decision can be explained back to the merchant (ADR-0017).
+            case EventTypes.ATTEMPT_RECORDED -> attempts.apply(
+                    codec.deserialize(message, AttemptRecorded.class).payload());
             // An unrecognised type is skipped rather than fatal, so a producer can
             // introduce an event before every consumer knows about it. The expiry event
             // this service publishes lands here too and is deliberately ignored — the

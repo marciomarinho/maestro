@@ -56,7 +56,15 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Off, deliberately. With it on, a consumer that subscribes before the topics are
+      # declared causes the broker to invent them with one partition; KafkaAdmin then
+      # widens them to six, and the consumer group carries on holding its original single
+      # assignment until an unrelated metadata refresh happens to notice. The symptom is a
+      # service silently receiving a fraction of the events addressed to it.
+      #
+      # With it off, the only way a topic exists is because a service declared it with the
+      # partition count ADR-0005 calls for, and an early subscriber waits instead.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       CLUSTER_ID: maestro-local-cluster
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
@@ -143,6 +151,7 @@ services:
       DB_PASSWORD: maestro_routing
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       ACQUIRER_SIM_URL: http://acquirer-sim:8082
+      ROUTER_OPS_TOKEN: ${ROUTER_OPS_TOKEN:-ops_local_token}
     ports:
       - "${ROUTER_PORT:-8081}:8081"
     depends_on:

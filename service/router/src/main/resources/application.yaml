@@ -20,6 +20,9 @@ spring:
     enabled: true
     schemas: routing
     default-schema: routing
+    # db/demo carries the acquiring agreements for the three simulated acquirers. The
+    # table is schema; the commercial terms in it are a local fixture.
+    locations: classpath:db/migration,classpath:db/demo
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -34,7 +37,12 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     listener:
-      ack-mode: record              # the offset follows the effect, never precedes it
+      ack-mode: record
+      # Partitions exist to be used. One thread per listener would leave five of six
+      # partitions idle and reproduce the head-of-line blocking the partitioning was
+      # meant to prevent — a payment waiting on an unresolved authorization would still
+      # hold up unrelated payments assigned to the same thread (ADR-0005).
+      concurrency: 3
 
 server:
   port: 8081
@@ -46,8 +54,61 @@ maestro:
     batch-size: 100
   router:
     request-timeout: 5s
+    # Guards /ops/routing, which exposes which banks the platform deals with, what it
+    # thinks of them and what they cost. A placeholder until Phase 6 brings real identity.
+    ops-token: ${ROUTER_OPS_TOKEN:ops_local_token}
+
+    # How fast the router changes its mind. The half-life is the only responsiveness
+    # tunable; everything else here is about how much evidence an opinion needs before
+    # it is allowed to be a strong one.
+    health:
+      half-life: 30s
+      prior-approval-rate: 0.90
+      prior-technical-failure-rate: 0.02
+      prior-weight: 20
+      restored-sample-cap: 10
+      snapshot-interval: 10s
+
+    # What the router values, and by how much. Availability outweighs cost roughly three
+    # to one: an acquirer thirty basis points cheaper that fails one request in five is
+    # not cheaper. See RouterProperties.Scoring for the full argument.
+    scoring:
+      approval-weight: 1.0
+      technical-weight: 1.2
+      latency-weight: 0.15
+      cost-weight: 0.40
+
+    # How hard to try before giving up on a payment. Bounded three ways, because each
+    # bound stops a different failure: walking every bank, re-offering to acquirers that
+    # already failed, and every payment retrying at once during an outage.
+    failover:
+      max-acquirers: 3
+      same-acquirer-retries: 2
+      backoff: 50ms
+      max-backoff: 500ms
+
+    # When to stop asking an acquirer at all. Consecutive failures rather than a rate:
+    # the rate already has an owner above.
+    breaker:
+      failure-threshold: 5
+      open-duration: 15s
+
+    # The cap that stops one acquirer's outage becoming a platform-wide retry storm.
+    retry-budget:
+      ratio: 0.10
+      minimum-retries: 5
+      window: 10s
+
+    # Connectivity only. What each acquirer costs is a commercial agreement and lives in
+    # the acquirer_corridor table; how healthy each one is, the router works out for
+    # itself. All three resolve to the same simulator, which impersonates each of them
+    # under its own identity (ADR-0011).
     acquirers:
+      - id: southcross
+        base-url: ${ACQUIRER_SIM_URL:http://localhost:8082}
       - id: northbank
+        base-url: ${ACQUIRER_SIM_URL:http://localhost:8082}
+      - id: meridian
         base-url: ${ACQUIRER_SIM_URL:http://localhost:8082}
 
 management:

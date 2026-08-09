@@ -39,6 +39,11 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     listener:
       ack-mode: record
+      # Partitions exist to be used. One thread per listener would leave five of six
+      # partitions idle and reproduce the head-of-line blocking the partitioning was
+      # meant to prevent — a payment waiting on an unresolved authorization would still
+      # hold up unrelated payments assigned to the same thread (ADR-0005).
+      concurrency: 3
 
 server:
   port: 8080

@@ -35,8 +35,11 @@ public class AcquirerController {
 
     @GetMapping
     public List<AcquirerSummary> list() {
+        // Reports behaviour as it is now, not as it was configured, so a reviewer running
+        // the brownout demo can see which acquirer they have broken.
         return simulator.acquirers().values().stream()
-                .map(a -> new AcquirerSummary(a.id(), a.name(), a.latency().toMillis()))
+                .map(a -> new AcquirerSummary(
+                        a.id(), a.name(), AdminController.BehaviourView.of(simulator.behaviourOf(a.id()))))
                 .toList();
     }
 
@@ -78,6 +81,7 @@ public class AcquirerController {
         return e.getMessage();
     }
 
-    public record AcquirerSummary(String id, String name, long latencyMs) {
+    public record AcquirerSummary(
+            String id, String name, AdminController.BehaviourView behaviour) {
     }
 }

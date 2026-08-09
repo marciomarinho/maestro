@@ -79,6 +79,12 @@ jobs:
       - name: Capture, refund, and prove the books balance
         run: ./scripts/demo-ledger.sh
 
+      # The flagship claim, executed rather than asserted: an acquirer is degraded live,
+      # traffic moves, the merchant's acceptance rate holds, and the healed acquirer wins
+      # its traffic back. If routing regresses, this is what notices.
+      - name: Break an acquirer and prove the routing adapts
+        run: ./scripts/demo-brownout.sh
+
       - name: Service logs on failure
         if: failure()
         run: docker compose -f deploy/compose/docker-compose.yml logs --tail 200

@@ -47,6 +47,17 @@ Weighted scheduling across per-merchant queues in the router, so one merchant's 
 **Design sketch:** per-merchant sub-queues drained by weighted deficit round-robin, with Kafka partition pause and resume providing backpressure so lag stays durable in the broker rather than in heap.
 **Build when** the routing story is complete and a second distributed-systems showcase is wanted. This is the strongest candidate on this list.
 
+### Asynchronous re-presentation of unresolved authorizations
+A timed-out authorization must be re-presented to the same acquirer with the same idempotency key, and today that happens inline on the Kafka consumer thread. A five-second acquirer deadline plus two re-presentations holds a consumer thread for fifteen seconds, and everything assigned to that thread waits.
+**Deferred because** the blast radius is already bounded — six partitions and three listener threads mean one stalled payment delays a sixth of traffic rather than all of it, and re-presentation is capped at two attempts. Moving it off-thread means a delay topic and a scheduler, which is real machinery for a case that is rare by construction.
+**Design sketch:** publish the unresolved attempt to a delayed-retry topic keyed by payment, consumed after a backoff, so the consumer thread returns immediately and per-payment ordering is preserved by the key.
+**Build when** a load report shows consumer lag driven by unresolved authorizations rather than by throughput. This is the most likely first bottleneck under the Phase 4 brownout-under-load scenario.
+
+### Shared acquirer health across router instances
+Health is per process today: each instance forms its opinion from the traffic it actually sent, and instances converge independently ([ADR-0007](adr/0007-adaptive-routing.md)).
+**Deferred because** the coordination would cost more than the disagreement it removes — every routing decision would depend on a round trip to a store holding a number that changes several times a second, and the thing being agreed on changes faster than agreement could be reached. The snapshot table already stops a restarting instance beginning blind.
+**Build when** instance count is high enough that each one individually sees too little traffic to form an opinion — which is a real problem at low volume per instance, and not one this platform has.
+
 ### Change data capture instead of the polling outbox
 Debezium reading the write-ahead log, removing the polling relay.
 **Deferred because** it adds Debezium and Kafka Connect to a stack that must run on a laptop, and moves a correctness-critical component outside the services that depend on it. See [ADR-0004](adr/0004-transactional-outbox.md).

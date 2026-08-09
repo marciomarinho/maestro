@@ -1,6 +1,8 @@
 package dev.maestro.payment.web;
 
+import dev.maestro.payment.attempt.AttemptProjection;
 import dev.maestro.payment.core.PaymentService;
+import dev.maestro.payment.security.TenantContext;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -20,9 +22,11 @@ public class PaymentController {
     private static final String REPLAYED_HEADER = "Idempotency-Replayed";
 
     private final PaymentService payments;
+    private final AttemptProjection attempts;
 
-    public PaymentController(PaymentService payments) {
+    public PaymentController(PaymentService payments, AttemptProjection attempts) {
         this.payments = payments;
+        this.attempts = attempts;
     }
 
     /**
@@ -81,6 +85,26 @@ public class PaymentController {
     @GetMapping("/payments/{paymentId}")
     public PaymentResponse get(@PathVariable String paymentId) {
         return payments.get(paymentId);
+    }
+
+    /**
+     * The routing audit trail: which acquirers were tried, why each was chosen, and what
+     * each answered.
+     *
+     * <p>Unusual for a payments API, and deliberate. Merchants integrating with
+     * orchestration platforms are routinely unable to find out why a payment took the path
+     * it took, which makes the platform a black box exactly when someone is trying to
+     * explain a bad afternoon to their own management. Exposing the selection reason and
+     * the score the decision was made on turns that into something a support team can read.
+     *
+     * <p>Reading {@code get} first is not redundant: it is what makes an unknown payment,
+     * and another tenant's payment, both return 404 rather than an empty list that implies
+     * the payment exists and simply has no history (ADR-0009).
+     */
+    @GetMapping("/payments/{paymentId}/attempts")
+    public List<AttemptProjection.AttemptView> attemptsFor(@PathVariable String paymentId) {
+        payments.get(paymentId);
+        return attempts.forPayment(TenantContext.requireMerchantId(), paymentId);
     }
 
     @GetMapping("/payments/{paymentId}/refunds")

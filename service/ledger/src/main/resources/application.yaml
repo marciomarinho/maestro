@@ -39,6 +39,7 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     listener:
       ack-mode: record
+      concurrency: 3            # one thread per partition group (ADR-0005)
 
 server:
   port: 8083

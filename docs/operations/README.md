@@ -24,8 +24,8 @@ Each lands with its phase. None are written speculatively for components that do
 |---|---|---|
 | Dead-letter queue growth | DLQ depth rising | 2 |
 | [Ledger drift detected](runbooks/ledger-drift.md) | Balance verification reports non-zero drift | 2 |
-| Acquirer brownout | Corridor health score collapse, success rate dip | 3 |
-| Circuit breaker stuck open | Breaker open beyond its expected probe cycle | 3 |
+| [Acquirer brownout](runbooks/acquirer-brownout.md) | Corridor health score collapse, success rate dip | 3 |
+| [Circuit breaker stuck open](runbooks/circuit-breaker-stuck-open.md) | Breaker open beyond its expected probe cycle | 3 |
 | Consumer lag | Kafka consumer group lag above threshold | 4 |
 | Database saturation | Connection pool exhaustion, statement latency | 4 |
 | Outbox relay stalled | Unpublished outbox rows ageing | 4 |

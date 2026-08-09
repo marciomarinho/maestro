@@ -2,12 +2,15 @@
 
 **Maestro accepts payments from many merchants and routes each transaction to the best of several acquiring banks — automatically shifting traffic away from a degrading acquirer so merchants' authorization success rates stay flat — while a double-entry ledger and daily reconciliation guarantee every cent is accounted for.**
 
-> **Status: Phase 2 complete — the money is real and the books balance.** A payment is
-> created, authorized, captured and partially refunded, and every movement lands as
-> double-entry postings that PostgreSQL itself refuses to let go unbalanced. Retry any
-> request and it is still charged exactly once.
-> The design was settled first: see the [roadmap](docs/ROADMAP.md) and the
-> [sixteen decision records](docs/adr/README.md).
+> **Status: Phase 3 complete — the flagship works.** Payments route across three acquiring
+> banks on a continuously updated health score. Break one live with a `curl` and watch its
+> score collapse, traffic move, failed authorizations cascade to a healthy bank, and the
+> merchant's acceptance rate hold at 100%. Heal it and exploration traffic finds it again
+> within a minute — with no configuration change and nobody paged.
+> `./scripts/demo-brownout.sh` does exactly that, and CI runs it on every push.
+> The design was settled first: see the [roadmap](docs/ROADMAP.md), the
+> [seventeen decision records](docs/adr/README.md) and the
+> [routing write-up](docs/architecture/routing.md).
 
 Everything runs on a laptop — about 1.6 GB across six containers today. `docker compose up`
 brings up the whole platform: services, Kafka, PostgreSQL, and simulated acquiring banks
@@ -91,7 +94,7 @@ Four JVM services and a web portal, each with one job. Full detail — component
 - [x] **Phase 0** — Design foundation: architecture, domain, API, authorization model, 14 ADRs
 - [x] **Phase 1** — Walking skeleton: create → confirm → authorize end-to-end, running locally
 - [x] **Phase 2** — The books: double-entry ledger, holds, capture/void/refund, race tests
-- [ ] **Phase 3** — The flagship: adaptive routing, failover, circuit breakers, the brownout demo
+- [x] **Phase 3** — The flagship: adaptive routing, failover, circuit breakers, the brownout demo
 - [ ] **Phase 4** — The evidence: tracing, dashboards, load reports, chaos experiments
 - [ ] **Phase 5** — Settlement & reconciliation: files, matching, discrepancies, payouts, webhooks
 - [ ] **Phase 6** — RBAC & merchant portal
