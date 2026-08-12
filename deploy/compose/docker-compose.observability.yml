@@ -50,6 +50,12 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # k6 streams its client-side metrics here during load runs, so a run and the
+      # platform's own telemetry land on the same dashboards with the same clock.
+      - --web.enable-remote-write-receiver
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:

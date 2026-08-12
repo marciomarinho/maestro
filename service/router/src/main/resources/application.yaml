@@ -38,11 +38,14 @@ spring:
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
     listener:
       ack-mode: record
-      # Partitions exist to be used. One thread per listener would leave five of six
-      # partitions idle and reproduce the head-of-line blocking the partitioning was
-      # meant to prevent — a payment waiting on an unresolved authorization would still
-      # hold up unrelated payments assigned to the same thread (ADR-0005).
-      concurrency: 3
+      # Partitions exist to be used — all six of them (ADR-0005). A listener thread
+      # here holds an acquirer call (~45 ms healthy, seconds in a brownout), which
+      # makes this the platform's authorization-throughput ceiling: the 2026-08-12
+      # load report measured 3 threads saturating at ~49 authorizations/s while the
+      # HTTP front door cheerfully accepted 100/s, and the gap became router consumer
+      # lag. Six threads, one per partition, doubled the ceiling; past this, the next
+      # step is more instances, not more threads.
+      concurrency: 6
       # Record processing runs inside an observation. The tracing bridge extracts the
       # traceparent header before the handler runs, so the listener span joins the
       # payment's originating trace rather than starting a fresh one.

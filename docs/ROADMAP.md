@@ -104,7 +104,7 @@ The reason the project exists. Everything before this was table stakes.
 
 ---
 
-## Phase 4 — The evidence
+## Phase 4 — The evidence ✅
 
 Claims become numbers. This phase produces the artefacts an interviewer reads after they are already interested.
 
@@ -114,7 +114,7 @@ Claims become numbers. This phase produces the artefacts an interviewer reads af
 - k6 load scenarios: steady state, spike, brownout-under-load
 - A published load report with an honest narrative: the bottleneck that was found, what was changed, before and after numbers
 - Chaos experiments using Toxiproxy: database latency, Kafka partition unavailability, acquirer timeouts — each with a written hypothesis and observed result
-- Runbooks: *consumer lag*, *dead-letter queue growth*, *database saturation*
+- Runbooks: *consumer lag*, *dead-letter queue growth*, *database saturation* — and a fourth, *outbox relay stalled*, because the operations posture had already promised it
 
 **Demoable:** follow a single payment's trace across all four services in Tempo; open a dashboard showing the routing split live.
 

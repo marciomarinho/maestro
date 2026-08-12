@@ -26,9 +26,9 @@ Each lands with its phase. None are written speculatively for components that do
 | [Ledger drift detected](runbooks/ledger-drift.md) | Balance verification reports non-zero drift | 2 |
 | [Acquirer brownout](runbooks/acquirer-brownout.md) | Corridor health score collapse, success rate dip | 3 |
 | [Circuit breaker stuck open](runbooks/circuit-breaker-stuck-open.md) | Breaker open beyond its expected probe cycle | 3 |
-| Consumer lag | Kafka consumer group lag above threshold | 4 |
-| Database saturation | Connection pool exhaustion, statement latency | 4 |
-| Outbox relay stalled | Unpublished outbox rows ageing | 4 |
+| [Consumer lag](runbooks/consumer-lag.md) | Kafka consumer group lag above threshold | 4 |
+| [Database saturation](runbooks/database-saturation.md) | Connection pool exhaustion, statement latency | 4 |
+| [Outbox relay stalled](runbooks/outbox-relay-stalled.md) | Unpublished outbox rows ageing | 4 |
 | Reconciliation discrepancy triage | Unmatched settlement lines, drift metric | 5 |
 | Webhook delivery failure | Merchant endpoint failing repeatedly | 5 |
 
@@ -57,7 +57,7 @@ Stated as targets the load tests and dashboards are built to measure. They are t
 
 **Metrics.** Prometheus, with a naming convention defined in `lib-observability` and a constants class that makes an ad-hoc metric name a code-review failure. The core families are the payments funnel by status, per-corridor health and routing split, ledger integrity, and the golden signals per service.
 
-**Logs.** Structured JSON with `trace_id`, `payment_id` and `merchant_id` on every line. Bodies are logged through a **field allow-list rather than a deny-list**, so a newly added sensitive field is excluded by default rather than leaked until someone notices.
+**Logs.** Structured ECS JSON in containers, with `traceId`, `payment_id` and `merchant_id` on every line (`LogContext` scopes the payment fields; the tracing bridge contributes the trace). Bodies are logged through a **field allow-list rather than a deny-list**, so a newly added sensitive field is excluded by default rather than leaked until someone notices.
 
 **Dashboards** are committed as provisioned JSON and reproducible from a cold start. A dashboard that exists only in someone's Grafana is not an operational asset.
 
@@ -65,7 +65,7 @@ Stated as targets the load tests and dashboards are built to measure. They are t
 
 ## The demo and chaos instruments
 
-`acquirer-sim` exposes a fault-injection API on a separate port, never mounted on the merchant surface. It is the instrument behind both the demo scripts and the chaos experiments: decline rates, latency distributions, timeouts, throughput caps, brownout and blackout, and injectable settlement discrepancies.
+`acquirer-sim` exposes a fault-injection API under `/admin`, deliberately unauthenticated and confined to the simulator — it exists to be broken. It is the instrument behind both the demo scripts and the load scenarios: decline rates, latency distributions, timeouts, throughput caps, brownout and blackout, and (from Phase 5) injectable settlement discrepancies.
 
 Toxiproxy sits between the services and their dependencies for infrastructure-level faults — database latency, Kafka unavailability, network partitions — used in the Phase 4 chaos experiments, each of which is published with a hypothesis, an observation and whether the hypothesis held.
 
@@ -78,7 +78,7 @@ Toxiproxy sits between the services and their dependencies for infrastructure-le
 | Poison message | Automatic retry with backoff, then the dead-letter topic; redrive through `POST /ops/dlq/redrive` after the cause is fixed |
 | Consumer defect after processing | Rewind the consumer group and replay; every consumer is idempotent, so replay is safe |
 | Ledger projection defect | Rebuild from the event stream; `source_event_id` uniqueness makes the rebuild idempotent |
-| Acquirer misbehaving | Disable the corridor through `PATCH /ops/acquirers/{id}`; traffic reroutes on the next decision |
+| Acquirer misbehaving | Disable the corridor (`acquirer_corridor.enabled = FALSE`); traffic reroutes on the next decision |
 | Stuck payment | Attempt history shows where it stopped; the reconciliation path resolves genuinely unknown outcomes |
 | Bad financial record | A reversing journal transaction with a recorded approval. Never an update |
 

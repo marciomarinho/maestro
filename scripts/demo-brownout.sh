@@ -199,8 +199,12 @@ DECLINED_ID=$(curl -sS -X POST "$API/v1/payments" \
   -H "Content-Type: application/json" \
   -d '{"amount_minor":1999,"currency":"AUD","card_token":"tok_visa_4242","confirm":true}' | jq -r .id)
 
+# A generous poll, not a latency assertion. The command may queue behind the brownout
+# backlog the earlier steps created, and the attempt view is an eventually consistent
+# projection (ADR-0017); what this step asserts is the *shape* of the trail once it
+# lands — one decline, never re-presented — not how fast it landed.
 DECLINE_TRAIL=""
-for _ in 1 2 3 4 5; do
+for _ in $(seq 1 30); do
   sleep 1
   DECLINE_TRAIL=$(curl -sS "$API/v1/payments/$DECLINED_ID/attempts" -H "Authorization: Bearer $KEY")
   [ "$(echo "$DECLINE_TRAIL" | jq 'length')" -gt 0 ] && break
@@ -243,7 +247,11 @@ curl -sS -X POST "$SIM/admin/acquirers/$VICTIM/heal" | jq -c .
 bold "8. Driving traffic while it recovers"
 RECOVERED=$(drive 60 healed)
 RECOVERY_TARGET=$((SHARE + 20))
-FINAL=$(await_share above "$RECOVERY_TARGET" 8 30 recover) \
+# Twelve batches, not eight: recovery speed is wall-clock (the EWMA's 30s half-life),
+# and a faster router burns through a batch budget in less elapsed time than the
+# score needs to move. The claim under test is unchanged — recovery on exploration
+# traffic alone — the budget just buys the clock it plays out on.
+FINAL=$(await_share above "$RECOVERY_TARGET" 12 30 recover) \
   || fail "$VICTIM only climbed back to ${FINAL}%, short of ${RECOVERY_TARGET}%"
 routing_table
 ok "recovery detected from exploration traffic alone: ${SHARE}% → ${FINAL}%"

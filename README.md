@@ -2,20 +2,23 @@
 
 **Maestro accepts payments from many merchants and routes each transaction to the best of several acquiring banks — automatically shifting traffic away from a degrading acquirer so merchants' authorization success rates stay flat — while a double-entry ledger and daily reconciliation guarantee every cent is accounted for.**
 
-> **Status: Phase 3 complete — the flagship works.** Payments route across three acquiring
-> banks on a continuously updated health score. Break one live with a `curl` and watch its
-> score collapse, traffic move, failed authorizations cascade to a healthy bank, and the
-> merchant's acceptance rate hold at 100%. Heal it and exploration traffic finds it again
-> within a minute — with no configuration change and nobody paged.
-> `./scripts/demo-brownout.sh` does exactly that, and CI runs it on every push.
+> **Status: Phase 4 complete — the claims are now numbers.** One payment produces one
+> trace across all four services; the routing brownout plays out live on provisioned
+> Grafana dashboards; k6 scenarios hold the platform to its SLOs and a
+> [load report](docs/load-reports/) publishes the honest results; three
+> [chaos experiments](docs/chaos/) — database latency, a severed broker, every acquirer
+> timing out at once — each ran against a written hypothesis, and each hypothesis held.
+> `./scripts/demo-brownout.sh` still breaks an acquirer live, and CI runs it on every push.
 > The design was settled first: see the [roadmap](docs/ROADMAP.md), the
-> [seventeen decision records](docs/adr/README.md) and the
+> [eighteen decision records](docs/adr/README.md) and the
 > [routing write-up](docs/architecture/routing.md).
 
-Everything runs on a laptop — about 1.6 GB across six containers today. `docker compose up`
-brings up the whole platform: services, Kafka, PostgreSQL, and simulated acquiring banks
-you can break on purpose. The observability stack and the merchant portal join it in
-later phases, behind their own profiles.
+Everything runs on a laptop — about 1.6 GB across six containers for the everyday loop.
+`docker compose up` brings up the whole platform: services, Kafka, PostgreSQL, and
+simulated acquiring banks you can break on purpose. Grafana, Prometheus and Tempo join as
+an [overlay](deploy/compose/docker-compose.observability.yml) when you want to watch;
+Toxiproxy joins as a [second overlay](deploy/compose/docker-compose.chaos.yml) when you
+want to break the network underneath it. The merchant portal arrives in Phase 6.
 
 ---
 
@@ -95,7 +98,7 @@ Four JVM services and a web portal, each with one job. Full detail — component
 - [x] **Phase 1** — Walking skeleton: create → confirm → authorize end-to-end, running locally
 - [x] **Phase 2** — The books: double-entry ledger, holds, capture/void/refund, race tests
 - [x] **Phase 3** — The flagship: adaptive routing, failover, circuit breakers, the brownout demo
-- [ ] **Phase 4** — The evidence: tracing, dashboards, load reports, chaos experiments
+- [x] **Phase 4** — The evidence: tracing, dashboards, load reports, chaos experiments
 - [ ] **Phase 5** — Settlement & reconciliation: files, matching, discrepancies, payouts, webhooks
 - [ ] **Phase 6** — RBAC & merchant portal
 - [ ] **Phase 7** — Kubernetes on a local cluster, CI polish, demo recording
@@ -131,14 +134,17 @@ $ ./scripts/demo-ledger.sh
     balance check: 0
 ```
 
-**102 tests** hold these claims up. Five ArchUnit rules keep the domain library
-framework-free and floating-point money out of the codebase entirely. Eighteen integration
-tests run against real PostgreSQL and Kafka, among them: twelve concurrent identical
-requests producing exactly one payment; ten concurrent captures producing exactly one
-capture; ten concurrent refunds against a captured amount that only five can fit into; an
-unbalanced journal transaction refused at `COMMIT` by a deferred constraint trigger even
-when inserted by raw SQL; `UPDATE` and `DELETE` on a posting denied by the database; and
-fee arithmetic that reconstructs the gross exactly across a million amounts.
+**143 tests** hold these claims up. Five ArchUnit rules keep the domain library
+framework-free and floating-point money out of the codebase entirely. Twenty-one
+integration tests run against real PostgreSQL and Kafka, among them: twelve concurrent
+identical requests producing exactly one payment; ten concurrent captures producing
+exactly one capture; ten concurrent refunds against a captured amount that only five can
+fit into; an unbalanced journal transaction refused at `COMMIT` by a deferred constraint
+trigger even when inserted by raw SQL; `UPDATE` and `DELETE` on a posting denied by the
+database; a merchant's `traceparent` riding one payment from HTTP header to outbox row to
+Kafka record; a poison message dead-lettered rather than skipped, and redriven back to its
+topic through the ops API; and fee arithmetic that reconstructs the gross exactly across a
+million amounts.
 
 ---
 
@@ -152,8 +158,10 @@ fee arithmetic that reconstructs the gross exactly across a million amounts.
 | [Domain model](docs/domain.md) | Payments vocabulary, entities, money-handling rules, invariants |
 | [API design](docs/architecture/api-design.md) | REST surface, idempotency, errors, pagination, webhooks |
 | [Authorization model](docs/security/authz-model.md) | Roles, permissions, tenant isolation, PCI scope boundary |
-| [Decision records](docs/adr/README.md) | Sixteen ADRs — the trade-offs, including the rejected options |
-| [Operations](docs/operations/README.md) | Runbooks and the incident-response posture |
+| [Decision records](docs/adr/README.md) | Eighteen ADRs — the trade-offs, including the rejected options |
+| [Operations](docs/operations/README.md) | Runbooks, SLOs and the incident-response posture |
+| [Chaos experiments](docs/chaos/README.md) | Injected infrastructure faults, each with a hypothesis and its verdict |
+| [Load reports](docs/load-reports/) | What the platform measured under load, bottleneck included |
 | [Backlog](docs/backlog.md) | Consciously deferred work, with the reasoning |
 
 ---
@@ -191,6 +199,21 @@ curl localhost:8080/v1/payments/<id> -H 'Authorization: Bearer sk_test_maestro_d
 
 If ports 8080–8082 are already taken on your machine, copy
 `deploy/compose/.env.example` to `deploy/compose/.env` and change them; the scripts follow.
+
+**Watching it work** — the observability stack is one overlay away:
+
+```bash
+docker compose -f deploy/compose/docker-compose.yml \
+               -f deploy/compose/docker-compose.observability.yml up -d --wait
+./scripts/demo-brownout.sh      # then watch http://localhost:3000 — Maestro › Acquirer health & routing
+```
+
+Grafana comes provisioned — four dashboards, no clicking — and Tempo holds the traces:
+pick any payment id from a demo's output and every hop it took, across all four
+services, is one trace. Load scenarios live one command away (`./scripts/load.sh
+steady|spike|brownout`), and the chaos experiments under `scripts/chaos/` each state a
+hypothesis, inject a network fault through Toxiproxy, and verify the platform's answer
+([results](docs/chaos/README.md)).
 
 **Working on it locally** — Java 25 and Docker:
 

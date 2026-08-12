@@ -139,6 +139,7 @@ Cohort analysis, approval-rate breakdowns by issuer and bank identification numb
 
 Not yet evaluated. Recorded so they are not lost, and not promoted without the reasoning above.
 
+- Retry-budget ratio revisit with production-shaped traffic — the 2026-08-12 load report saw the 10% budget 96% utilised during a 15 rps brownout, sacrificing 0.65% of payments; the ratio was chosen for storm prevention, not measured against acceptance
 - Smart capture timing — delaying capture to reduce refund rates on physical goods
 - Authorization top-up and incremental authorization for hospitality and car rental
 - A per-merchant sandbox mode routed to a dedicated simulated acquirer

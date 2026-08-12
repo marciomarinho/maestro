@@ -1,0 +1,67 @@
+# The chaos overlay: Toxiproxy between the services and their dependencies.
+#
+#   docker compose -f deploy/compose/docker-compose.yml \
+#                  -f deploy/compose/docker-compose.chaos.yml up -d
+#
+# (Stack the observability overlay too if you want to watch the experiments on the
+# dashboards — the two overlays are independent.)
+#
+# Three network paths are interceptable, one per experiment in docs/chaos/:
+#   postgres-payment  payment-api → PostgreSQL      (database latency)
+#   kafka             every service → the broker    (broker unavailability)
+#   acquirers         router → acquirer-sim         (acquirer timeouts)
+#
+# The Kafka path needs a broker-side accomplice: a Kafka client follows the broker's
+# *advertised* address after bootstrap, so proxying 9092 would be bypassed one metadata
+# refresh later. The broker therefore gets a dedicated CHAOS listener whose advertised
+# address is the proxy itself — traffic that arrives through Toxiproxy is told to keep
+# coming through Toxiproxy.
+#
+# The experiments in scripts/chaos/ drive the Toxiproxy API on ${TOXIPROXY_PORT:-8474}.
+
+name: maestro
+
+services:
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    command: ["-host", "0.0.0.0", "-config", "/config/proxies.json"]
+    volumes:
+      - ./chaos/proxies.json:/config/proxies.json:ro
+    ports:
+      - "${TOXIPROXY_PORT:-8474}:8474"
+    healthcheck:
+      test: ["CMD", "/toxiproxy-cli", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    environment:
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:19092,CHAOS://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-19092},CHAOS://toxiproxy:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CHAOS:PLAINTEXT
+
+  payment-api:
+    environment:
+      DB_HOST: toxiproxy
+      DB_PORT: "15432"
+      KAFKA_BOOTSTRAP_SERVERS: toxiproxy:9094
+    depends_on:
+      toxiproxy:
+        condition: service_healthy
+
+  router:
+    environment:
+      ACQUIRER_SIM_URL: http://toxiproxy:18082
+      KAFKA_BOOTSTRAP_SERVERS: toxiproxy:9094
+    depends_on:
+      toxiproxy:
+        condition: service_healthy
+
+  ledger:
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: toxiproxy:9094
+    depends_on:
+      toxiproxy:
+        condition: service_healthy
