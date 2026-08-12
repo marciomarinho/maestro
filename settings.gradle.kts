@@ -24,6 +24,7 @@ rootProject.name = "maestro"
 // Shared libraries. lib-domain depends on nothing; the rest may use Spring.
 include("lib:lib-domain")
 include("lib:lib-events")
+include("lib:lib-observability")
 include("lib:lib-outbox")
 include("lib:lib-testing")
 

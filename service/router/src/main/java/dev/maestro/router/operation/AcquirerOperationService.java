@@ -27,6 +27,7 @@ import dev.maestro.router.attempt.Attempt;
 import dev.maestro.router.attempt.AttemptRepository;
 import dev.maestro.router.health.CorridorKey;
 import dev.maestro.router.health.HealthRegistry;
+import dev.maestro.router.observability.AttemptMetrics;
 import dev.maestro.router.resilience.CircuitBreakers;
 import dev.maestro.router.resilience.RetryBudget;
 import java.util.HashSet;
@@ -96,6 +97,7 @@ public class AcquirerOperationService {
     private final RouterProperties.Failover failover;
     private final OutboxWriter outbox;
     private final TransactionTemplate transactions;
+    private final AttemptMetrics attemptMetrics;
 
     public AcquirerOperationService(
             AttemptRepository attempts,
@@ -106,7 +108,8 @@ public class AcquirerOperationService {
             RetryBudget retryBudget,
             RouterProperties properties,
             OutboxWriter outbox,
-            TransactionTemplate transactions) {
+            TransactionTemplate transactions,
+            AttemptMetrics attemptMetrics) {
         this.attempts = attempts;
         this.selector = selector;
         this.acquirers = acquirers;
@@ -116,6 +119,7 @@ public class AcquirerOperationService {
         this.failover = properties.failover();
         this.outbox = outbox;
         this.transactions = transactions;
+        this.attemptMetrics = attemptMetrics;
     }
 
     // --- authorize ----------------------------------------------------------
@@ -598,6 +602,10 @@ public class AcquirerOperationService {
                         attempt.attemptNo(), attempt.acquirerId(), attempt.corridor(),
                         attempt.selectionReason(), attempt.healthScore(), outcome,
                         responseCode, message, result.latencyMs(), finalAttempt));
+
+        attemptMetrics.record(
+                attempt.acquirerId(), attempt.corridor(), attempt.operation(),
+                outcome, result.latencyMs());
 
         log.info(
                 "subject={} operation={} attempt={} acquirer={} outcome={} latencyMs={} final={}",

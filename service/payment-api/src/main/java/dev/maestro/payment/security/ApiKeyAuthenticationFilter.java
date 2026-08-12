@@ -30,9 +30,10 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        // Health and readiness are consumed by the container runtime, which has no
-        // credential to present. Nothing merchant-scoped is reachable through them.
-        return request.getRequestURI().startsWith("/actuator/health");
+        // The management surface is consumed by machinery with no credential to
+        // present: health by the container runtime, /actuator/prometheus by the
+        // scraper. Nothing merchant-scoped is reachable through any of it.
+        return request.getRequestURI().startsWith("/actuator/");
     }
 
     @Override

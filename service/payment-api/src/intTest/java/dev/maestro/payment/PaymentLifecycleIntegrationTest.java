@@ -23,6 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.stream.IntStream;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -165,6 +166,51 @@ class PaymentLifecycleIntegrationTest {
         assertThat(published.amountMinor()).isEqualTo(2500L);
         assertThat(published.currency()).isEqualTo("AUD");
         assertThat(published.cardToken()).isEqualTo("tok_visa_4242");
+    }
+
+    @Test
+    @DisplayName("the trace context rides the outbox row onto the Kafka record header")
+    void traceContextRidesTheOutboxRow() {
+        // The merchant's caller is upstream of Maestro: whatever trace they started must
+        // still be the trace on the command the router consumes, or the asynchronous hop
+        // splits every payment into disconnected fragments. The path under test is the
+        // whole relay mechanism: HTTP header → request span → outbox row → traceparent
+        // Kafka header (ADR-0018).
+        String upstreamTraceId = "4bf92f3577b34da6a3ce929d0e0e4736";
+        HttpResponse<String> response = send(HttpRequest.newBuilder()
+                .uri(uri("/v1/payments"))
+                .header("Authorization", "Bearer " + API_KEY)
+                .header("Idempotency-Key", "trace-1")
+                .header("Content-Type", "application/json")
+                .header("traceparent", "00-" + upstreamTraceId + "-00f067aa0ba902b7-01")
+                .POST(HttpRequest.BodyPublishers.ofString("""
+                        {
+                          "amount_minor": 1999,
+                          "currency": "AUD",
+                          "card_token": "tok_visa_4242",
+                          "reference": "order-trace",
+                          "confirm": true
+                        }
+                        """))
+                .build());
+        String paymentId = json(response).get("id").asString();
+
+        String storedTraceParent = Awaitility.await()
+                .atMost(Duration.ofSeconds(10))
+                .until(() -> jdbc.sql(
+                                "SELECT trace_parent FROM payment.outbox_event WHERE aggregate_id = :id")
+                        .param("id", paymentId)
+                        .query(String.class)
+                        .optional()
+                        .orElse(null), value -> value != null);
+        assertThat(storedTraceParent)
+                .as("the outbox row must carry the request's trace context")
+                .contains(upstreamTraceId);
+
+        var record = consumeCommandRecordFor(paymentId);
+        var header = record.headers().lastHeader("traceparent");
+        assertThat(header).as("the relay must restore the context as a Kafka header").isNotNull();
+        assertThat(new String(header.value(), StandardCharsets.UTF_8)).contains(upstreamTraceId);
     }
 
     @Test
@@ -405,6 +451,11 @@ class PaymentLifecycleIntegrationTest {
     }
 
     private AuthorizationRequested consumeCommandFor(String paymentId) {
+        return codec.deserialize(consumeCommandRecordFor(paymentId).value(), AuthorizationRequested.class)
+                .payload();
+    }
+
+    private ConsumerRecord<String, String> consumeCommandRecordFor(String paymentId) {
         Map<String, Object> config = Map.of(
                 ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, MaestroInfrastructure.kafkaBootstrapServers(),
                 ConsumerConfig.GROUP_ID_CONFIG, "integration-test-" + System.nanoTime(),
@@ -422,7 +473,7 @@ class PaymentLifecycleIntegrationTest {
                     if (paymentId.equals(envelope.payload().paymentId())) {
                         // Keyed by payment, which is what guarantees per-payment ordering.
                         assertThat(record.key()).isEqualTo(paymentId);
-                        return envelope.payload();
+                        return record;
                     }
                 }
             }

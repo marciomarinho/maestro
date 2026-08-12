@@ -1,5 +1,7 @@
 package dev.maestro.router.observability;
 
+import dev.maestro.observability.MetricNames;
+import dev.maestro.observability.MetricTags;
 import dev.maestro.router.health.CorridorKey;
 import dev.maestro.router.health.HealthRegistry;
 import dev.maestro.router.resilience.CircuitBreakers;
@@ -49,7 +51,7 @@ public class RoutingMetrics {
 
     @EventListener(ApplicationReadyEvent.class)
     public void registerBudgetGauge() {
-        Gauge.builder("maestro.router.retry.budget.utilisation", retryBudget, RetryBudget::utilisation)
+        Gauge.builder(MetricNames.ROUTER_RETRY_BUDGET_UTILISATION, retryBudget, RetryBudget::utilisation)
                 .description("Retries spent as a fraction of the ceiling. Approaching one "
                         + "means failover is about to start being refused.")
                 .register(meters);
@@ -71,28 +73,28 @@ public class RoutingMetrics {
         if (!registered.add(key)) {
             return;
         }
-        Tags tags = Tags.of("acquirer", key.acquirerId(), "corridor", key.corridor());
+        Tags tags = Tags.of(MetricTags.ACQUIRER, key.acquirerId(), MetricTags.CORRIDOR, key.corridor());
 
-        Gauge.builder("maestro.router.corridor.approval.rate", key,
+        Gauge.builder(MetricNames.ROUTER_CORRIDOR_APPROVAL_RATE, key,
                         k -> health.readingFor(k).approvalRate())
                 .description("Approvals over decisive outcomes, shrunk towards the prior")
                 .tags(tags)
                 .register(meters);
 
-        Gauge.builder("maestro.router.corridor.technical.failure.rate", key,
+        Gauge.builder(MetricNames.ROUTER_CORRIDOR_TECHNICAL_FAILURE_RATE, key,
                         k -> health.readingFor(k).technicalFailureRate())
                 .description("Failures over all attempts. The availability signal.")
                 .tags(tags)
                 .register(meters);
 
-        Gauge.builder("maestro.router.corridor.latency", key,
+        Gauge.builder(MetricNames.ROUTER_CORRIDOR_LATENCY, key,
                         k -> health.readingFor(k).latencyMillis().orElse(0))
                 .description("Time-decayed mean acquirer latency")
                 .baseUnit("milliseconds")
                 .tags(tags)
                 .register(meters);
 
-        Gauge.builder("maestro.router.corridor.samples", key,
+        Gauge.builder(MetricNames.ROUTER_CORRIDOR_SAMPLES, key,
                         k -> health.readingFor(k).samples())
                 .description("Effective observations behind the reading. Falling towards "
                         + "zero means the router is deciding on assumption, not evidence.")
@@ -101,7 +103,7 @@ public class RoutingMetrics {
 
         // Numeric because a breaker's state has an order — closed, half-open, open — and
         // an alert wants "not closed" rather than a string comparison per state.
-        Gauge.builder("maestro.router.corridor.breaker", key,
+        Gauge.builder(MetricNames.ROUTER_CORRIDOR_BREAKER, key,
                         k -> switch (breakers.stateOf(k)) {
                             case CLOSED -> 0;
                             case HALF_OPEN -> 1;

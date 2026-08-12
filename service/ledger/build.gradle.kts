@@ -6,6 +6,9 @@ plugins {
 dependencies {
     implementation(project(":lib:lib-domain"))
     implementation(project(":lib:lib-events"))
+    // Not for an outbox — the ledger publishes nothing. This brings the shared
+    // messaging wiring: declared topics and dead-letter handling for the listener.
+    implementation(project(":lib:lib-outbox"))
 
     implementation(libs.spring.boot.starter.web)
     implementation(libs.spring.boot.starter.jdbc)

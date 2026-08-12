@@ -21,6 +21,19 @@ spring-boot-starter-kafka = { module = "org.springframework.boot:spring-boot-sta
 spring-boot-starter-flyway = { module = "org.springframework.boot:spring-boot-starter-flyway" }
 # RestClient.Builder is auto-configured by this module, not by starter-web.
 spring-boot-starter-restclient = { module = "org.springframework.boot:spring-boot-starter-restclient" }
+# Boot 4 packages tracing as its own starter: the Micrometer→OTel bridge, the OTLP span
+# exporter and their auto-configuration arrive together or not at all.
+spring-boot-starter-opentelemetry = { module = "org.springframework.boot:spring-boot-starter-opentelemetry" }
+# The scrape endpoint's auto-configuration already ships inside actuator's
+# spring-boot-micrometer-metrics; the registry on the classpath is what switches it on.
+micrometer-registry-prometheus = { module = "io.micrometer:micrometer-registry-prometheus" }
+# The tracing API alone (Tracer, Propagator) — lib-outbox reads the current trace
+# context without caring which bridge implements it.
+micrometer-tracing = { module = "io.micrometer:micrometer-tracing" }
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api" }
+micrometer-core = { module = "io.micrometer:micrometer-core" }
+spring-web = { module = "org.springframework:spring-web" }
+jakarta-servlet = { module = "jakarta.servlet:jakarta.servlet-api" }
 spring-kafka-test = { module = "org.springframework.kafka:spring-kafka-test" }
 postgresql = { module = "org.postgresql:postgresql" }
 flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }

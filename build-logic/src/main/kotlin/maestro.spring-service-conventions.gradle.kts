@@ -9,6 +9,12 @@ val libs = the<LibrariesForLibs>()
 
 dependencies {
     "implementation"(libs.spring.boot.starter.actuator)
+    // Every service is observable the same way: the naming constants and correlation
+    // helpers, the Prometheus scrape endpoint, and W3C trace propagation with an OTLP
+    // exporter. Added here rather than per service so that a service cannot opt out.
+    "implementation"(project(":lib:lib-observability"))
+    "implementation"(libs.micrometer.registry.prometheus)
+    "implementation"(libs.spring.boot.starter.opentelemetry)
     "testImplementation"(libs.spring.boot.starter.test)
 }
 

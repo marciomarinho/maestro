@@ -1,0 +1,25 @@
+# Tempo, minimally: OTLP in, local disk, no clustering. The services push spans over
+# OTLP/HTTP; Grafana queries by trace id and TraceQL over the query API on 3200.
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+
+compactor:
+  compaction:
+    # A laptop's traces from this afternoon are interesting; last week's are disk usage.
+    block_retention: 24h

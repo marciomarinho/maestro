@@ -5,6 +5,7 @@ import dev.maestro.domain.money.Money;
 import dev.maestro.domain.payment.CaptureMethod;
 import dev.maestro.domain.payment.PaymentStatus;
 import dev.maestro.payment.idempotency.IdempotencyRepository;
+import dev.maestro.payment.observability.PaymentMetrics;
 import dev.maestro.payment.security.TenantContext;
 import dev.maestro.payment.web.ApiException;
 import dev.maestro.payment.web.CaptureRequest;
@@ -51,18 +52,21 @@ public class PaymentService {
     private final IdempotencyRepository idempotency;
     private final PaymentCommands commands;
     private final ObjectMapper json;
+    private final PaymentMetrics metrics;
 
     public PaymentService(
             PaymentRepository payments,
             RefundRepository refunds,
             IdempotencyRepository idempotency,
             PaymentCommands commands,
-            ObjectMapper json) {
+            ObjectMapper json,
+            PaymentMetrics metrics) {
         this.payments = payments;
         this.refunds = refunds;
         this.idempotency = idempotency;
         this.commands = commands;
         this.json = json;
+        this.metrics = metrics;
     }
 
     /** The result of an operation, and whether it was served from a previous one. */
@@ -103,8 +107,10 @@ public class PaymentService {
                 null, null, null, null, null, null, null, null);
 
         payments.insert(payment);
+        metrics.transition(PaymentMetrics.CREATED);
         if (confirming) {
             commands.requestAuthorization(payment);
+            metrics.transition(PaymentMetrics.AUTHORIZING);
         }
 
         HttpStatus status = confirming ? HttpStatus.ACCEPTED : HttpStatus.CREATED;
@@ -133,6 +139,7 @@ public class PaymentService {
 
         Payment authorizing = require(merchantId, paymentId);
         commands.requestAuthorization(authorizing);
+        metrics.transition(PaymentMetrics.AUTHORIZING);
 
         PaymentResponse body = toResponse(authorizing);
         complete(merchantId, ENDPOINT_CONFIRM, idempotencyKey, HttpStatus.ACCEPTED, body, paymentId);

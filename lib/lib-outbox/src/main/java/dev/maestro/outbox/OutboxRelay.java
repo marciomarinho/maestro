@@ -1,8 +1,11 @@
 package dev.maestro.outbox;
 
+import dev.maestro.events.EventHeaders;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -99,7 +102,7 @@ public class OutboxRelay {
                 // Synchronous send: publication order within an aggregate must match
                 // creation order, and a failure must stop the batch rather than leave a
                 // gap behind it.
-                kafka.send(event.topic(), event.aggregateId(), event.payload()).join();
+                kafka.send(record(event)).join();
             }
 
             jdbc.sql("""
@@ -116,6 +119,23 @@ public class OutboxRelay {
         return published == null ? 0 : published;
     }
 
+    /**
+     * The relay runs in its own trace — a scheduled poll, nothing to do with the
+     * payment. Restoring the writer's context as the {@code traceparent} header is what
+     * keeps the asynchronous hop inside the originating trace: consumers extract the
+     * header before any application code runs, so the listener span joins the trace of
+     * the request that caused the event, not the trace of the poll that shipped it.
+     */
+    private ProducerRecord<String, String> record(PendingEvent event) {
+        ProducerRecord<String, String> record =
+                new ProducerRecord<>(event.topic(), event.aggregateId(), event.payload());
+        if (event.traceParent() != null) {
+            record.headers().add(EventHeaders.TRACE_PARENT,
+                    event.traceParent().getBytes(StandardCharsets.UTF_8));
+        }
+        return record;
+    }
+
     private List<PendingEvent> claim() {
         // pg_try_advisory_xact_lock claims the aggregate for this transaction and
         // releases it at commit. Rows belonging to an aggregate another instance is
@@ -123,7 +143,7 @@ public class OutboxRelay {
         // The planner may evaluate the lock call on rows that fail the other
         // predicate; taking a surplus transaction-scoped lock is harmless.
         return jdbc.sql("""
-                SELECT id, aggregate_id, topic, payload
+                SELECT id, aggregate_id, topic, payload, trace_parent
                   FROM %s.outbox_event
                  WHERE published_at IS NULL
                    AND pg_try_advisory_xact_lock(hashtext(aggregate_id))
@@ -135,7 +155,8 @@ public class OutboxRelay {
                         rs.getString("id"),
                         rs.getString("aggregate_id"),
                         rs.getString("topic"),
-                        rs.getString("payload")))
+                        rs.getString("payload"),
+                        rs.getString("trace_parent")))
                 .list();
     }
 
@@ -154,6 +175,7 @@ public class OutboxRelay {
         }
     }
 
-    private record PendingEvent(String id, String aggregateId, String topic, String payload) {
+    private record PendingEvent(
+            String id, String aggregateId, String topic, String payload, String traceParent) {
     }
 }

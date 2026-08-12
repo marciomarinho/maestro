@@ -1,1 +1,2 @@
+dev.maestro.outbox.MessagingAutoConfiguration
 dev.maestro.outbox.OutboxAutoConfiguration

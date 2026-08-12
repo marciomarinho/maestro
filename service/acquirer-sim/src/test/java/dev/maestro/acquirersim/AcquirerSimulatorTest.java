@@ -80,8 +80,7 @@ class AcquirerSimulatorTest {
 
         // One slow call occupies the single permit while a second arrives.
         try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-            pool.submit(() -> authorize("slow"));
-            AcquirerResponse refused = awaitRefusal();
+            AcquirerResponse refused = awaitRefusal(pool);
             assertThat(refused.outcome()).isEqualTo("THROTTLED");
             assertThat(refused.retryAfterMillis()).isNotNull();
         }
@@ -132,14 +131,25 @@ class AcquirerSimulatorTest {
     // --- helpers ------------------------------------------------------------
 
     /**
-     * Retries until the concurrent slow call has taken the permit, so the test asserts
-     * on capacity rather than on thread scheduling.
+     * Produces a genuine permit collision, whichever thread the scheduler favours.
+     *
+     * <p>Each round races one background call against foreground probes. If a probe
+     * finds the permit taken, that is the refusal under test. If instead the
+     * <em>background</em> call was the one refused — the probe won the permit — the
+     * round proved the cap works but observed it from the wrong side, so the race is
+     * simply run again. What this must never do is depend on which side wins, because
+     * that is thread scheduling, not capacity.
      */
-    private AcquirerResponse awaitRefusal() {
-        for (int i = 0; i < 200; i++) {
-            AcquirerResponse response = authorize("refused-" + i);
-            if ("THROTTLED".equals(response.outcome())) {
-                return response;
+    private AcquirerResponse awaitRefusal(ExecutorService pool) {
+        for (int round = 0; round < 50; round++) {
+            String slowKey = "slow-" + round;
+            var slow = pool.submit(() -> authorize(slowKey));
+            int probe = 0;
+            while (!slow.isDone()) {
+                AcquirerResponse response = authorize("probe-" + round + "-" + probe++);
+                if ("THROTTLED".equals(response.outcome())) {
+                    return response;
+                }
             }
         }
         throw new AssertionError("The capacity cap never refused a request");

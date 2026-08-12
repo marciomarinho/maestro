@@ -1,0 +1,17 @@
+# Scrapes the four services' actuator endpoints. Five seconds, not the usual fifteen:
+# the brownout demo's whole story — health collapse, traffic shift, breaker cycle —
+# plays out in about a minute, and at 15s resolution it would be four data points.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: maestro
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - payment-api:8080
+          - router:8081
+          - acquirer-sim:8082
+          - ledger:8083

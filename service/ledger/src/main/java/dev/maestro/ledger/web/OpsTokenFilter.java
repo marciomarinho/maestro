@@ -35,7 +35,11 @@ public class OpsTokenFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return request.getRequestURI().startsWith("/actuator/health");
+        // The management surface is not the ops API: health feeds container
+        // orchestration and /actuator/prometheus feeds the scraper, and neither can
+        // present a bearer token. Nothing commercially sensitive lives under
+        // /actuator — the sensitive views are the /ops endpoints this filter exists for.
+        return request.getRequestURI().startsWith("/actuator/");
     }
 
     @Override

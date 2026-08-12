@@ -44,6 +44,10 @@ spring:
       # meant to prevent — a payment waiting on an unresolved authorization would still
       # hold up unrelated payments assigned to the same thread (ADR-0005).
       concurrency: 3
+      # Record processing runs inside an observation. The tracing bridge extracts the
+      # traceparent header before the handler runs, so the listener span joins the
+      # payment's originating trace rather than starting a fresh one.
+      observation-enabled: true
 
 server:
   port: 8080
@@ -58,11 +62,38 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus,metrics
   endpoint:
     health:
       probes:
         enabled: true
+  # Histogram buckets on the latency SLO sources, so Prometheus can compute the
+  # percentiles the operations SLO table is stated in.
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  # Metrics leave by Prometheus scrape only. The OTel starter also brings an OTLP
+  # metrics registry, which left enabled would push to a collector that is not there.
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  tracing:
+    # Sample everything. Local volumes are demo-scale, and a sampled-out trace of the
+    # one interesting payment defeats the purpose of having traces at all.
+    sampling:
+      probability: 1.0
+    # Spans are created and propagated unconditionally; they leave the process only
+    # when the observability stack is up to receive them. The compose overlay flips
+    # this and points the endpoint at Tempo.
+    export:
+      enabled: ${TRACING_EXPORT_ENABLED:false}
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
 
 logging:
   level:

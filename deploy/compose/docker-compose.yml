@@ -78,6 +78,10 @@ services:
       dockerfile: Dockerfile
       args:
         SERVICE: acquirer-sim
+    environment:
+      # Containers log ECS JSON so every line carries trace_id, payment_id and
+      # merchant_id as fields; `gradlew bootRun` keeps the human-readable pattern.
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "${ACQUIRER_SIM_PORT:-8082}:8082"
     healthcheck:
@@ -97,6 +101,7 @@ services:
       DB_USER: maestro_payment
       DB_PASSWORD: maestro_payment
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "${PAYMENT_API_PORT:-8080}:8080"
     depends_on:
@@ -126,6 +131,7 @@ services:
       DB_MIGRATION_PASSWORD: maestro_ledger_migrator
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       LEDGER_OPS_TOKEN: ${LEDGER_OPS_TOKEN:-ops_local_token}
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "${LEDGER_PORT:-8083}:8083"
     depends_on:
@@ -152,6 +158,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       ACQUIRER_SIM_URL: http://acquirer-sim:8082
       ROUTER_OPS_TOKEN: ${ROUTER_OPS_TOKEN:-ops_local_token}
+      LOGGING_STRUCTURED_FORMAT_CONSOLE: ecs
     ports:
       - "${ROUTER_PORT:-8081}:8081"
     depends_on:

@@ -1,25 +1,26 @@
 package dev.maestro.outbox;
 
 import dev.maestro.events.EventCodec;
-import dev.maestro.events.Topics;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.tracing.TraceContext;
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
-import org.apache.kafka.clients.admin.NewTopic;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringSerializer;
+import java.util.function.Supplier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.boot.jdbc.autoconfigure.JdbcClientAutoConfiguration;
 import org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration;
-import org.springframework.boot.kafka.autoconfigure.KafkaProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -28,7 +29,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Wires the outbox for any service that owns one.
  *
  * <p>A service opts in by setting {@code maestro.outbox.schema}; the outbox table
- * always lives in the schema whose transactions it joins.
+ * always lives in the schema whose transactions it joins. A service without the
+ * property — the ledger consumes but never publishes — gets only the shared messaging
+ * wiring from {@link MessagingAutoConfiguration}.
  *
  * <p>Ordered after the data source, JDBC and Kafka auto-configurations, since it builds
  * on all three. Without the ordering it is evaluated first and finds none of them.
@@ -36,86 +39,17 @@ import org.springframework.transaction.support.TransactionTemplate;
 @AutoConfiguration(after = {
         DataSourceAutoConfiguration.class,
         JdbcClientAutoConfiguration.class,
-        KafkaAutoConfiguration.class
+        KafkaAutoConfiguration.class,
+        MessagingAutoConfiguration.class
 })
+@ConditionalOnProperty("maestro.outbox.schema")
 @EnableConfigurationProperties(OutboxProperties.class)
 @EnableScheduling
 public class OutboxAutoConfiguration {
 
     @Bean
-    @ConditionalOnMissingBean
-    public EventCodec eventCodec() {
-        return new EventCodec();
-    }
-
-    /**
-     * Declares the platform's topics rather than letting the broker invent them.
-     *
-     * <p>Auto-created topics get the broker's default partition count, which is one. That
-     * quietly repeals ADR-0005: partitioning by payment exists so that unrelated payments
-     * are processed independently, and with a single partition every payment in the
-     * platform queues behind every other one. It costs nothing while acquirers answer in
-     * forty milliseconds, and it is why a brownout — where one unresolved authorization
-     * holds its thread for seconds — stalls traffic that has nothing to do with the
-     * acquirer that is unwell.
-     *
-     * <p>Declared here because the module that publishes an event is the one that should
-     * guarantee somewhere to publish it to. {@code KafkaAdmin} applies these at startup
-     * and will raise the partition count of an existing topic, so an environment created
-     * before this existed is corrected rather than left behind.
-     */
-    @Bean
-    public NewTopic paymentCommandsTopic(OutboxProperties properties) {
-        return topic(Topics.PAYMENT_COMMANDS, properties);
-    }
-
-    @Bean
-    public NewTopic paymentEventsTopic(OutboxProperties properties) {
-        return topic(Topics.PAYMENT_EVENTS, properties);
-    }
-
-    /**
-     * The dead-letter topic, deliberately single-partition.
-     *
-     * <p>Nothing consumes it automatically — it exists so an operator can look at what
-     * failed and redrive it — and a single partition keeps that inspection in one place
-     * and in order.
-     */
-    @Bean
-    public NewTopic paymentCommandsDlqTopic(OutboxProperties properties) {
-        return TopicBuilder.name(Topics.PAYMENT_COMMANDS_DLQ)
-                .partitions(1)
-                .replicas(properties.topicReplicas())
-                .build();
-    }
-
-    private static NewTopic topic(String name, OutboxProperties properties) {
-        return TopicBuilder.name(name)
-                .partitions(properties.topicPartitions())
-                .replicas(properties.topicReplicas())
-                .build();
-    }
-
-    @Bean
     public TransactionTemplate outboxTransactionTemplate(PlatformTransactionManager manager) {
         return new TransactionTemplate(manager);
-    }
-
-    /**
-     * A producer owned by the outbox rather than borrowed from the application.
-     *
-     * <p>The relay always publishes a serialised envelope as a string, so it fixes its
-     * own serializers instead of inheriting whatever the surrounding application
-     * configured — the event wire format is a contract between services and should not
-     * change because someone adjusted an unrelated producer setting. Broker addresses
-     * and the rest still come from {@code spring.kafka}.
-     */
-    @Bean
-    public KafkaTemplate<String, String> outboxKafkaTemplate(KafkaProperties kafkaProperties) {
-        Map<String, Object> config = kafkaProperties.buildProducerProperties();
-        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        return new KafkaTemplate<>(new DefaultKafkaProducerFactory<>(config));
     }
 
     /**
@@ -130,12 +64,12 @@ public class OutboxAutoConfiguration {
     @Bean
     public OutboxRelay outboxRelay(
             JdbcClient jdbc,
-            KafkaTemplate<String, String> outboxKafkaTemplate,
+            KafkaTemplate<String, String> eventKafkaTemplate,
             OutboxProperties properties,
             TransactionTemplate outboxTransactionTemplate,
             OutboxWakeUpExecutor executor) {
         return new OutboxRelay(
-                jdbc, outboxKafkaTemplate, properties, outboxTransactionTemplate, executor);
+                jdbc, eventKafkaTemplate, properties, outboxTransactionTemplate, executor);
     }
 
     @Bean
@@ -143,8 +77,43 @@ public class OutboxAutoConfiguration {
             JdbcClient jdbc,
             EventCodec eventCodec,
             OutboxProperties properties,
-            OutboxRelay relay) {
-        return new OutboxWriter(jdbc, eventCodec, properties, relay::wakeUp);
+            OutboxRelay relay,
+            ObjectProvider<Tracer> tracer,
+            ObjectProvider<Propagator> propagator) {
+        return new OutboxWriter(
+                jdbc, eventCodec, properties, relay::wakeUp,
+                currentTraceParent(tracer, propagator));
+    }
+
+    @Bean
+    @ConditionalOnBean(MeterRegistry.class)
+    public OutboxMetrics outboxMetrics(
+            JdbcClient jdbc, OutboxProperties properties, MeterRegistry meters) {
+        return new OutboxMetrics(jdbc, properties, meters);
+    }
+
+    /**
+     * Reads the calling thread's trace context as a W3C {@code traceparent} string, or
+     * {@code null} when there is no tracer or no active span. Resolved through
+     * {@link ObjectProvider} so the outbox works unchanged in a service — or a test
+     * slice — that has no tracing configured at all.
+     */
+    private static Supplier<String> currentTraceParent(
+            ObjectProvider<Tracer> tracerProvider, ObjectProvider<Propagator> propagatorProvider) {
+        return () -> {
+            Tracer tracer = tracerProvider.getIfAvailable();
+            Propagator propagator = propagatorProvider.getIfAvailable();
+            if (tracer == null || propagator == null) {
+                return null;
+            }
+            TraceContext context = tracer.currentTraceContext().context();
+            if (context == null) {
+                return null;
+            }
+            Map<String, String> carrier = new HashMap<>();
+            propagator.inject(context, carrier, Map::put);
+            return carrier.get("traceparent");
+        };
     }
 
     /** Named type so the executor can be injected unambiguously and closed on shutdown. */

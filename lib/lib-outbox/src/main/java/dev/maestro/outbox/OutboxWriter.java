@@ -2,6 +2,7 @@ package dev.maestro.outbox;
 
 import dev.maestro.events.EventCodec;
 import dev.maestro.events.EventEnvelope;
+import java.util.function.Supplier;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -23,16 +24,19 @@ public class OutboxWriter {
     private final EventCodec codec;
     private final OutboxProperties properties;
     private final Runnable relayWakeUp;
+    private final Supplier<String> currentTraceParent;
 
     public OutboxWriter(
             JdbcClient jdbc,
             EventCodec codec,
             OutboxProperties properties,
-            Runnable relayWakeUp) {
+            Runnable relayWakeUp,
+            Supplier<String> currentTraceParent) {
         this.jdbc = jdbc;
         this.codec = codec;
         this.properties = properties;
         this.relayWakeUp = relayWakeUp;
+        this.currentTraceParent = currentTraceParent;
     }
 
     public void append(EventEnvelope<?> envelope, String aggregateType, String topic) {
@@ -40,6 +44,14 @@ public class OutboxWriter {
             throw new IllegalStateException(
                     "Outbox writes must join the transaction that performs the state change; "
                             + "appending outside a transaction would silently defeat the pattern");
+        }
+
+        // The append is the only moment the originating context — an HTTP request span,
+        // a listener's processing span — is still on this thread. The relay that
+        // eventually publishes the row runs on its own schedule in its own trace, so
+        // whatever is not written down here is lost to the asynchronous hop.
+        if (envelope.traceParent() == null) {
+            envelope = envelope.withTraceParent(currentTraceParent.get());
         }
 
         jdbc.sql("""

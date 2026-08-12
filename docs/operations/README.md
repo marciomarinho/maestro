@@ -22,7 +22,7 @@ Each lands with its phase. None are written speculatively for components that do
 
 | Runbook | Signal | Phase |
 |---|---|---|
-| Dead-letter queue growth | DLQ depth rising | 2 |
+| [Dead-letter queue growth](runbooks/dead-letter-queue-growth.md) | DLQ depth rising | 4 |
 | [Ledger drift detected](runbooks/ledger-drift.md) | Balance verification reports non-zero drift | 2 |
 | [Acquirer brownout](runbooks/acquirer-brownout.md) | Corridor health score collapse, success rate dip | 3 |
 | [Circuit breaker stuck open](runbooks/circuit-breaker-stuck-open.md) | Breaker open beyond its expected probe cycle | 3 |

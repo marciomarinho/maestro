@@ -10,6 +10,7 @@ import dev.maestro.events.payload.RefundFailed;
 import dev.maestro.events.payload.RefundSucceeded;
 import dev.maestro.events.payload.VoidFailed;
 import dev.maestro.events.payload.VoidSucceeded;
+import dev.maestro.payment.observability.PaymentMetrics;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,12 +36,17 @@ public class PaymentLifecycleService {
     private final PaymentRepository payments;
     private final RefundRepository refunds;
     private final PaymentCommands commands;
+    private final PaymentMetrics metrics;
 
     public PaymentLifecycleService(
-            PaymentRepository payments, RefundRepository refunds, PaymentCommands commands) {
+            PaymentRepository payments,
+            RefundRepository refunds,
+            PaymentCommands commands,
+            PaymentMetrics metrics) {
         this.payments = payments;
         this.refunds = refunds;
         this.commands = commands;
+        this.metrics = metrics;
     }
 
     /**
@@ -64,6 +70,7 @@ public class PaymentLifecycleService {
                     event.paymentId());
             return;
         }
+        metrics.transition(PaymentMetrics.AUTHORIZED);
         log.info("payment={} status=AUTHORIZED acquirer={}", event.paymentId(), event.acquirerId());
 
         Payment payment = payments.findById(event.paymentId()).orElseThrow();
@@ -76,31 +83,33 @@ public class PaymentLifecycleService {
 
     @Transactional
     public void onDeclined(AuthorizationDeclined event) {
-        logTransition("DECLINED", event.paymentId(), payments.markDeclined(
+        recordTransition("DECLINED", PaymentMetrics.DECLINED, event.paymentId(), payments.markDeclined(
                 event.paymentId(), event.acquirerId(), event.declineCode(), event.message()));
     }
 
     @Transactional
     public void onAuthorizationFailed(AuthorizationFailed event) {
-        logTransition("FAILED", event.paymentId(), payments.markFailed(event.paymentId(), event.reason()));
+        recordTransition("FAILED", PaymentMetrics.FAILED, event.paymentId(),
+                payments.markFailed(event.paymentId(), event.reason()));
     }
 
     @Transactional
     public void onCaptured(CaptureSucceeded event) {
-        logTransition("CAPTURED", event.paymentId(),
+        recordTransition("CAPTURED", PaymentMetrics.CAPTURED, event.paymentId(),
                 payments.markCaptured(event.paymentId(), event.amountMinor()));
     }
 
     /** A failed capture leaves the authorization intact, so the merchant can try again. */
     @Transactional
     public void onCaptureFailed(CaptureFailed event) {
-        logTransition("AUTHORIZED (capture failed)", event.paymentId(),
-                payments.markCaptureFailed(event.paymentId(), event.reason()));
+        recordTransition("AUTHORIZED (capture failed)", PaymentMetrics.CAPTURE_FAILED,
+                event.paymentId(), payments.markCaptureFailed(event.paymentId(), event.reason()));
     }
 
     @Transactional
     public void onVoided(VoidSucceeded event) {
-        logTransition("VOIDED", event.paymentId(), payments.markVoided(event.paymentId()));
+        recordTransition("VOIDED", PaymentMetrics.VOIDED, event.paymentId(),
+                payments.markVoided(event.paymentId()));
     }
 
     /**
@@ -123,6 +132,7 @@ public class PaymentLifecycleService {
             return;
         }
         payments.settleRefund(event.paymentId(), event.amountMinor());
+        metrics.transition(PaymentMetrics.REFUND_SUCCEEDED);
         log.info("payment={} refund={} settled", event.paymentId(), event.refundId());
     }
 
@@ -140,6 +150,7 @@ public class PaymentLifecycleService {
             return;
         }
         payments.releaseRefundReservation(event.paymentId(), event.amountMinor());
+        metrics.transition(PaymentMetrics.REFUND_FAILED);
         log.warn("payment={} refund={} failed, reservation released: {}",
                 event.paymentId(), event.refundId(), event.reason());
     }
@@ -160,6 +171,7 @@ public class PaymentLifecycleService {
         for (Payment payment : lapsed) {
             if (payments.markExpired(payment.id()) == 1) {
                 commands.announceExpiry(payment);
+                metrics.transition(PaymentMetrics.EXPIRED);
                 expired++;
                 log.info("payment={} authorization expired", payment.id());
             }
@@ -167,11 +179,12 @@ public class PaymentLifecycleService {
         return expired;
     }
 
-    private static void logTransition(String outcome, String paymentId, int rowsUpdated) {
+    private void recordTransition(String outcome, String transition, String paymentId, int rowsUpdated) {
         if (rowsUpdated == 0) {
             log.debug("payment={} not in the expected state; {} event absorbed as a duplicate",
                     paymentId, outcome);
         } else {
+            metrics.transition(transition);
             log.info("payment={} status={}", paymentId, outcome);
         }
     }

@@ -1,6 +1,7 @@
 package dev.maestro.ledger.messaging;
 
 import dev.maestro.events.EventCodec;
+import dev.maestro.events.EventEnvelope;
 import dev.maestro.events.EventTypes;
 import dev.maestro.events.Topics;
 import dev.maestro.events.payload.AuthorizationExpired;
@@ -8,7 +9,9 @@ import dev.maestro.events.payload.AuthorizationSucceeded;
 import dev.maestro.events.payload.CaptureSucceeded;
 import dev.maestro.events.payload.RefundSucceeded;
 import dev.maestro.events.payload.VoidSucceeded;
+import dev.maestro.observability.LogContext;
 import dev.maestro.ledger.posting.LedgerPostingService;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -42,17 +45,25 @@ public class PaymentEventListener {
     public void onPaymentEvent(String message) {
         String eventType = codec.peekEventType(message);
         switch (eventType) {
-            case EventTypes.AUTHORIZATION_SUCCEEDED ->
-                    postings.onAuthorized(codec.deserialize(message, AuthorizationSucceeded.class));
-            case EventTypes.CAPTURE_SUCCEEDED ->
-                    postings.onCaptured(codec.deserialize(message, CaptureSucceeded.class));
-            case EventTypes.REFUND_SUCCEEDED ->
-                    postings.onRefunded(codec.deserialize(message, RefundSucceeded.class));
-            case EventTypes.VOID_SUCCEEDED ->
-                    postings.onVoided(codec.deserialize(message, VoidSucceeded.class));
-            case EventTypes.AUTHORIZATION_EXPIRED ->
-                    postings.onExpired(codec.deserialize(message, AuthorizationExpired.class));
+            case EventTypes.AUTHORIZATION_SUCCEEDED -> handle(
+                    codec.deserialize(message, AuthorizationSucceeded.class), postings::onAuthorized);
+            case EventTypes.CAPTURE_SUCCEEDED -> handle(
+                    codec.deserialize(message, CaptureSucceeded.class), postings::onCaptured);
+            case EventTypes.REFUND_SUCCEEDED -> handle(
+                    codec.deserialize(message, RefundSucceeded.class), postings::onRefunded);
+            case EventTypes.VOID_SUCCEEDED -> handle(
+                    codec.deserialize(message, VoidSucceeded.class), postings::onVoided);
+            case EventTypes.AUTHORIZATION_EXPIRED -> handle(
+                    codec.deserialize(message, AuthorizationExpired.class), postings::onExpired);
             default -> log.debug("No ledger effect for event type {}", eventType);
+        }
+    }
+
+    /** Everything logged while posting this event carries the payment's identifiers. */
+    @SuppressWarnings("try") // the resource exists only for its close()
+    private <T> void handle(EventEnvelope<T> envelope, Consumer<EventEnvelope<T>> handler) {
+        try (var ignored = LogContext.forPayment(envelope.aggregateId(), envelope.merchantId())) {
+            handler.accept(envelope);
         }
     }
 }

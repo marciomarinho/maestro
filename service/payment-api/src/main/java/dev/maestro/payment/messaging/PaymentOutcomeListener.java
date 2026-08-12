@@ -1,6 +1,7 @@
 package dev.maestro.payment.messaging;
 
 import dev.maestro.events.EventCodec;
+import dev.maestro.events.EventEnvelope;
 import dev.maestro.events.EventTypes;
 import dev.maestro.events.Topics;
 import dev.maestro.events.payload.AttemptRecorded;
@@ -13,8 +14,10 @@ import dev.maestro.events.payload.RefundFailed;
 import dev.maestro.events.payload.RefundSucceeded;
 import dev.maestro.events.payload.VoidFailed;
 import dev.maestro.events.payload.VoidSucceeded;
+import dev.maestro.observability.LogContext;
 import dev.maestro.payment.attempt.AttemptProjection;
 import dev.maestro.payment.core.PaymentLifecycleService;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -47,33 +50,42 @@ public class PaymentOutcomeListener {
     public void onPaymentEvent(String message) {
         String eventType = codec.peekEventType(message);
         switch (eventType) {
-            case EventTypes.AUTHORIZATION_SUCCEEDED -> lifecycle.onAuthorized(
-                    codec.deserialize(message, AuthorizationSucceeded.class).payload());
-            case EventTypes.AUTHORIZATION_DECLINED -> lifecycle.onDeclined(
-                    codec.deserialize(message, AuthorizationDeclined.class).payload());
-            case EventTypes.AUTHORIZATION_FAILED -> lifecycle.onAuthorizationFailed(
-                    codec.deserialize(message, AuthorizationFailed.class).payload());
-            case EventTypes.CAPTURE_SUCCEEDED -> lifecycle.onCaptured(
-                    codec.deserialize(message, CaptureSucceeded.class).payload());
-            case EventTypes.CAPTURE_FAILED -> lifecycle.onCaptureFailed(
-                    codec.deserialize(message, CaptureFailed.class).payload());
-            case EventTypes.VOID_SUCCEEDED -> lifecycle.onVoided(
-                    codec.deserialize(message, VoidSucceeded.class).payload());
-            case EventTypes.VOID_FAILED -> lifecycle.onVoidFailed(
-                    codec.deserialize(message, VoidFailed.class).payload());
-            case EventTypes.REFUND_SUCCEEDED -> lifecycle.onRefunded(
-                    codec.deserialize(message, RefundSucceeded.class).payload());
-            case EventTypes.REFUND_FAILED -> lifecycle.onRefundFailed(
-                    codec.deserialize(message, RefundFailed.class).payload());
+            case EventTypes.AUTHORIZATION_SUCCEEDED -> handle(
+                    codec.deserialize(message, AuthorizationSucceeded.class), lifecycle::onAuthorized);
+            case EventTypes.AUTHORIZATION_DECLINED -> handle(
+                    codec.deserialize(message, AuthorizationDeclined.class), lifecycle::onDeclined);
+            case EventTypes.AUTHORIZATION_FAILED -> handle(
+                    codec.deserialize(message, AuthorizationFailed.class),
+                    lifecycle::onAuthorizationFailed);
+            case EventTypes.CAPTURE_SUCCEEDED -> handle(
+                    codec.deserialize(message, CaptureSucceeded.class), lifecycle::onCaptured);
+            case EventTypes.CAPTURE_FAILED -> handle(
+                    codec.deserialize(message, CaptureFailed.class), lifecycle::onCaptureFailed);
+            case EventTypes.VOID_SUCCEEDED -> handle(
+                    codec.deserialize(message, VoidSucceeded.class), lifecycle::onVoided);
+            case EventTypes.VOID_FAILED -> handle(
+                    codec.deserialize(message, VoidFailed.class), lifecycle::onVoidFailed);
+            case EventTypes.REFUND_SUCCEEDED -> handle(
+                    codec.deserialize(message, RefundSucceeded.class), lifecycle::onRefunded);
+            case EventTypes.REFUND_FAILED -> handle(
+                    codec.deserialize(message, RefundFailed.class), lifecycle::onRefundFailed);
             // The only event here that changes no state. It is projected purely so the
             // routing decision can be explained back to the merchant (ADR-0017).
-            case EventTypes.ATTEMPT_RECORDED -> attempts.apply(
-                    codec.deserialize(message, AttemptRecorded.class).payload());
+            case EventTypes.ATTEMPT_RECORDED -> handle(
+                    codec.deserialize(message, AttemptRecorded.class), attempts::apply);
             // An unrecognised type is skipped rather than fatal, so a producer can
             // introduce an event before every consumer knows about it. The expiry event
             // this service publishes lands here too and is deliberately ignored — the
             // payment was already marked expired in the transaction that emitted it.
             default -> log.debug("Ignoring event of type {}", eventType);
+        }
+    }
+
+    /** Everything logged while applying this outcome carries the payment's identifiers. */
+    @SuppressWarnings("try") // the resource exists only for its close()
+    private <T> void handle(EventEnvelope<T> envelope, Consumer<T> handler) {
+        try (var ignored = LogContext.forPayment(envelope.aggregateId(), envelope.merchantId())) {
+            handler.accept(envelope.payload());
         }
     }
 }
